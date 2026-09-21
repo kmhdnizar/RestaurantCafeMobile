@@ -20,6 +20,7 @@ interface Line {
   menuItemId: string;
   name: string;
   quantity: number;
+  category?: string;
 }
 
 /**
@@ -49,9 +50,9 @@ export default function EditOrderScreen() {
   useEffect(() => {
     if (lines) return;
     if (localEntry) {
-      setLines(localEntry.payload.items.map((it, i) => ({ menuItemId: it.menuItemId, name: localEntry.display.lines[i]?.name ?? 'Item', quantity: it.quantity })));
+      setLines(localEntry.payload.items.map((it, i) => ({ menuItemId: it.menuItemId, name: localEntry.display.lines[i]?.name ?? 'Item', quantity: it.quantity, category: localEntry.display.lines[i]?.category })));
     } else if (serverOrder) {
-      setLines(serverOrder.items.map((it) => ({ menuItemId: it.menuItem.id, name: it.menuItem.name, quantity: it.quantity })));
+      setLines(serverOrder.items.map((it) => ({ menuItemId: it.menuItem.id, name: it.menuItem.name, quantity: it.quantity, category: it.menuItem.category?.name })));
     }
   }, [lines, localEntry, serverOrder]);
 
@@ -79,12 +80,12 @@ export default function EditOrderScreen() {
     });
   }
 
-  function addLine(item: { id: string; name: string }) {
+  function addLine(item: { id: string; name: string; category?: { name: string } }) {
     setLines((prev) => {
       if (!prev) return prev;
       const existing = prev.find((l) => l.menuItemId === item.id);
       if (existing) return prev.map((l) => (l.menuItemId === item.id ? { ...l, quantity: l.quantity + 1 } : l));
-      return [...prev, { menuItemId: item.id, name: item.name, quantity: 1 }];
+      return [...prev, { menuItemId: item.id, name: item.name, quantity: 1, category: item.category?.name }];
     });
   }
 
@@ -100,7 +101,7 @@ export default function EditOrderScreen() {
         const ok = await updateQueuedOrderItems(
           localEntry.clientRef,
           lines.map((l) => ({ menuItemId: l.menuItemId, quantity: l.quantity })),
-          { label: localEntry.display.label, lines: lines.map((l) => ({ name: l.name, quantity: l.quantity })) }
+          { label: localEntry.display.label, lines: lines.map((l) => ({ name: l.name, quantity: l.quantity, category: l.category })) }
         );
         if (!ok) {
           setError('This order was just sent, so it can no longer be changed here. Go back and open it again.');

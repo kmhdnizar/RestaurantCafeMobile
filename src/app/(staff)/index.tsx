@@ -13,6 +13,8 @@ import { enqueueOrder } from '@/offline/outbox';
 import { flushOutbox } from '@/offline/sync-engine';
 import { useOutboxStore } from '@/state/outbox-store';
 import { useSessionStore } from '@/state/session-store';
+import { useKitchenPrinter } from '@/print/use-kitchen-printer';
+import { groupByCategory } from '@/print/escpos';
 
 export default function NewOrderScreen() {
   const theme = useTheme();
@@ -20,6 +22,7 @@ export default function NewOrderScreen() {
 
   const { items: visibleItems, tables: activeTables, fmt, loading } = useOrderableMenu();
 
+  const kitchen = useKitchenPrinter();
   const cart = useCartStore();
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
@@ -70,13 +73,22 @@ export default function NewOrderScreen() {
         },
         {
           label: cart.orderType === 'DINE_IN' ? (table ? tableName(table) : 'Table') : cart.customerName.trim(),
-          lines: cart.lines.map((l) => ({ name: l.name, quantity: l.quantity })),
+          lines: cart.lines.map((l) => ({ name: l.name, quantity: l.quantity, category: l.category })),
         }
       );
+      // Built from the cart before it is cleared. Printed straight away from
+      // this data — it doesn't wait for the order to reach the server, so
+      // the kitchen gets the ticket even when the internet is down.
+      const ticketBody = {
+        orderNumber: null,
+        label: cart.orderType === 'DINE_IN' ? (table ? tableName(table) : 'Table') : cart.customerName.trim(),
+        categories: groupByCategory(cart.lines.map((l) => ({ qty: l.quantity, name: l.name, notes: l.notes || null, category: l.category }))),
+      };
       cart.reset();
       setCartOpen(false);
       await useOutboxStore.getState().refresh(userId);
       void flushOutbox();
+      if (kitchen.enabled) void kitchen.print(ticketBody);
     } catch {
       setError('Could not save the order on this phone. Please try again.');
     } finally {

@@ -26,6 +26,7 @@ export interface RestaurantConfig {
   timezone: string;
   printOrdersByCategory: boolean;
   kitchenPrinterBridgeUrl: string | null;
+  kitchenPrinterAddress: string | null;
 }
 
 export async function fetchMenuItems(): Promise<MenuItem[]> {

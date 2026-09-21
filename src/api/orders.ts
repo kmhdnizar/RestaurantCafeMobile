@@ -7,7 +7,7 @@ export interface OrderSummary {
   status: "PENDING" | "PREPARING" | "READY" | "SERVED" | "CANCELLED";
   customerName: string | null;
   table: { number: number; name: string | null } | null;
-  items: { id: string; quantity: number; menuItem: { id: string; name: string } }[];
+  items: { id: string; quantity: number; notes: string | null; menuItem: { id: string; name: string; category?: { id: string; name: string } } }[];
   createdAt: string;
 }
 

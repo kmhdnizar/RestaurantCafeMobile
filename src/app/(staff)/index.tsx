@@ -1,0 +1,309 @@
+import { useMemo, useState } from 'react';
+import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQuery } from '@tanstack/react-query';
+
+import { ThemedText } from '@/components/themed-text';
+import { ThemedView } from '@/components/themed-view';
+import { useTheme } from '@/hooks/use-theme';
+import { Spacing } from '@/constants/theme';
+import { fetchMenuItems, fetchTables, fetchServingPeriods, fetchConfig } from '@/api/menu';
+import { getActiveServingPeriodIds, isItemVisible } from '@/lib/serving-period';
+import { formatCurrency, currencyToLocale, tableName } from '@/lib/format';
+import { useCartStore, cartTotal } from '@/state/cart-store';
+import { enqueueOrder } from '@/offline/outbox';
+import { flushOutbox } from '@/offline/sync-engine';
+import { useOutboxStore } from '@/state/outbox-store';
+import { useSessionStore } from '@/state/session-store';
+
+export default function NewOrderScreen() {
+  const theme = useTheme();
+  const userId = useSessionStore((s) => s.user?.id ?? null);
+
+  const menuQuery = useQuery({ queryKey: ['menu-items'], queryFn: fetchMenuItems });
+  const tablesQuery = useQuery({ queryKey: ['tables'], queryFn: fetchTables });
+  const servingPeriodsQuery = useQuery({ queryKey: ['serving-periods'], queryFn: fetchServingPeriods });
+  const configQuery = useQuery({ queryKey: ['config'], queryFn: fetchConfig });
+
+  const cart = useCartStore();
+  const [search, setSearch] = useState('');
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [cartOpen, setCartOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const currencyCode = configQuery.data?.currencyCode ?? 'MYR';
+  const currencyLocale = currencyToLocale(currencyCode);
+  const timezone = configQuery.data?.timezone ?? 'UTC';
+  const fmt = (v: number) => formatCurrency(v, currencyCode, currencyLocale);
+
+  const servingPeriods = servingPeriodsQuery.data ?? [];
+  const activeServingPeriodIds = useMemo(() => getActiveServingPeriodIds(servingPeriods, timezone), [servingPeriods, timezone]);
+
+  const allItems = menuQuery.data ?? [];
+  const visibleItems = allItems.filter((item) => item.available && isItemVisible(item.servingPeriods.map((sp) => sp.servingPeriod.id), servingPeriods, activeServingPeriodIds, false));
+
+  const categories = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const item of visibleItems) seen.set(item.category.id, item.category.name);
+    return [...seen.entries()].map(([id, name]) => ({ id, name }));
+  }, [visibleItems]);
+
+  const filteredItems = visibleItems.filter((item) => {
+    if (activeCategory && item.category.id !== activeCategory) return false;
+    if (search.trim() && !item.name.toLowerCase().includes(search.trim().toLowerCase())) return false;
+    return true;
+  });
+
+  const activeTables = (tablesQuery.data ?? []).filter((t) => t.active);
+
+  async function handleSubmit() {
+    setError(null);
+    if (cart.lines.length === 0) {
+      setError('Add at least one item.');
+      return;
+    }
+    if (cart.orderType === 'DINE_IN' && !cart.tableId) {
+      setError('Select a table.');
+      return;
+    }
+    if (cart.orderType === 'TAKEAWAY' && !cart.customerName.trim()) {
+      setError('Enter a customer name.');
+      return;
+    }
+    if (!userId) return;
+    setSubmitting(true);
+    try {
+      // Always saved on the phone first, then sent in the background — one
+      // code path whether or not there's a connection right now.
+      const table = activeTables.find((t) => t.id === cart.tableId);
+      await enqueueOrder(
+        userId,
+        {
+          type: cart.orderType,
+          tableId: cart.orderType === 'DINE_IN' ? cart.tableId : undefined,
+          customerName: cart.orderType === 'TAKEAWAY' ? cart.customerName.trim() : undefined,
+          notes: cart.notes || undefined,
+          items: cart.lines.map((l) => ({ menuItemId: l.menuItemId, quantity: l.quantity, notes: l.notes || undefined })),
+        },
+        {
+          label: cart.orderType === 'DINE_IN' ? (table ? tableName(table) : 'Table') : cart.customerName.trim(),
+          lines: cart.lines.map((l) => ({ name: l.name, quantity: l.quantity })),
+        }
+      );
+      cart.reset();
+      setCartOpen(false);
+      await useOutboxStore.getState().refresh(userId);
+      void flushOutbox();
+    } catch {
+      setError('Could not save the order on this phone. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const loading = menuQuery.isLoading || tablesQuery.isLoading || servingPeriodsQuery.isLoading || configQuery.isLoading;
+
+  return (
+    <ThemedView style={styles.container}>
+      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+        <ThemedText type="subtitle" style={styles.title}>
+          New Order
+        </ThemedText>
+
+        {/* Order type */}
+        <ThemedView style={styles.segmented}>
+          {(['DINE_IN', 'TAKEAWAY'] as const).map((t) => (
+            <Pressable key={t} onPress={() => cart.setOrderType(t)} style={[styles.segment, cart.orderType === t && styles.segmentActive]}>
+              <ThemedText style={cart.orderType === t ? styles.segmentTextActive : undefined}>{t === 'DINE_IN' ? 'Dine-in' : 'Takeaway'}</ThemedText>
+            </Pressable>
+          ))}
+        </ThemedView>
+
+        {cart.orderType === 'DINE_IN' ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow} contentContainerStyle={styles.chipRowContent}>
+            {activeTables.map((table) => (
+              <Pressable key={table.id} onPress={() => cart.setTableId(table.id)} style={[styles.chip, cart.tableId === table.id && styles.chipActive]}>
+                <ThemedText style={cart.tableId === table.id ? styles.chipTextActive : undefined}>{table.name?.trim() || `Table ${table.number}`}</ThemedText>
+              </Pressable>
+            ))}
+          </ScrollView>
+        ) : (
+          <TextInput
+            value={cart.customerName}
+            onChangeText={cart.setCustomerName}
+            placeholder="Customer name"
+            placeholderTextColor={theme.textSecondary}
+            style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+          />
+        )}
+
+        <TextInput
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Search menu…"
+          placeholderTextColor={theme.textSecondary}
+          style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+        />
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow} contentContainerStyle={styles.chipRowContent}>
+          <Pressable onPress={() => setActiveCategory(null)} style={[styles.chip, activeCategory === null && styles.chipActive]}>
+            <ThemedText style={activeCategory === null ? styles.chipTextActive : undefined}>All</ThemedText>
+          </Pressable>
+          {categories.map((c) => (
+            <Pressable key={c.id} onPress={() => setActiveCategory(c.id)} style={[styles.chip, activeCategory === c.id && styles.chipActive]}>
+              <ThemedText style={activeCategory === c.id ? styles.chipTextActive : undefined}>{c.name}</ThemedText>
+            </Pressable>
+          ))}
+        </ScrollView>
+
+        {loading && <ActivityIndicator style={styles.loading} />}
+
+        <FlatList
+          data={filteredItems}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.menuList}
+          renderItem={({ item }) => {
+            const line = cart.lines.find((l) => l.menuItemId === item.id);
+            return (
+              <ThemedView type="backgroundElement" style={styles.menuRow}>
+                <ThemedView type="backgroundElement" style={styles.menuRowInfo}>
+                  <ThemedText type="smallBold">{item.name}</ThemedText>
+                  <ThemedText themeColor="textSecondary" type="small">
+                    {fmt(Number(item.price))}
+                  </ThemedText>
+                </ThemedView>
+                {line ? (
+                  <ThemedView type="backgroundElement" style={styles.qtyControl}>
+                    <Pressable onPress={() => cart.updateQuantity(item.id, -1)} style={styles.qtyButton}>
+                      <ThemedText style={styles.qtyButtonText}>−</ThemedText>
+                    </Pressable>
+                    <ThemedText style={styles.qtyValue}>{line.quantity}</ThemedText>
+                    <Pressable onPress={() => cart.updateQuantity(item.id, 1)} style={styles.qtyButton}>
+                      <ThemedText style={styles.qtyButtonText}>+</ThemedText>
+                    </Pressable>
+                  </ThemedView>
+                ) : (
+                  <Pressable onPress={() => cart.addItem(item)} style={styles.addButton}>
+                    <ThemedText style={styles.addButtonText}>Add</ThemedText>
+                  </Pressable>
+                )}
+              </ThemedView>
+            );
+          }}
+          ListEmptyComponent={!loading ? <ThemedText themeColor="textSecondary">No items match right now.</ThemedText> : null}
+        />
+
+        {cart.lines.length > 0 && (
+          <Pressable onPress={() => setCartOpen(true)} style={styles.cartBar}>
+            <ThemedText style={styles.cartBarText}>
+              {cart.lines.reduce((n, l) => n + l.quantity, 0)} item{cart.lines.length !== 1 ? 's' : ''} · {fmt(cartTotal(cart.lines))}
+            </ThemedText>
+            <ThemedText style={styles.cartBarText}>Review →</ThemedText>
+          </Pressable>
+        )}
+      </SafeAreaView>
+
+      <Modal visible={cartOpen} animationType="slide" onRequestClose={() => setCartOpen(false)}>
+        <ThemedView style={styles.container}>
+          <SafeAreaView style={styles.safeArea}>
+            <ThemedText type="subtitle" style={styles.title}>
+              Your Order
+            </ThemedText>
+
+            {error && (
+              <ThemedView style={styles.errorBox}>
+                <ThemedText style={styles.errorText}>{error}</ThemedText>
+              </ThemedView>
+            )}
+
+            <FlatList
+              data={cart.lines}
+              keyExtractor={(l) => l.menuItemId}
+              contentContainerStyle={styles.menuList}
+              renderItem={({ item: line }) => (
+                <ThemedView type="backgroundElement" style={styles.menuRow}>
+                  <ThemedView type="backgroundElement" style={styles.menuRowInfo}>
+                    <ThemedText type="smallBold">{line.name}</ThemedText>
+                    <ThemedText themeColor="textSecondary" type="small">
+                      {fmt(line.price * line.quantity)}
+                    </ThemedText>
+                  </ThemedView>
+                  <ThemedView type="backgroundElement" style={styles.qtyControl}>
+                    <Pressable onPress={() => cart.updateQuantity(line.menuItemId, -1)} style={styles.qtyButton}>
+                      <ThemedText style={styles.qtyButtonText}>−</ThemedText>
+                    </Pressable>
+                    <ThemedText style={styles.qtyValue}>{line.quantity}</ThemedText>
+                    <Pressable onPress={() => cart.updateQuantity(line.menuItemId, 1)} style={styles.qtyButton}>
+                      <ThemedText style={styles.qtyButtonText}>+</ThemedText>
+                    </Pressable>
+                    <Pressable onPress={() => cart.removeItem(line.menuItemId)} style={styles.removeButton}>
+                      <ThemedText style={styles.removeButtonText}>✕</ThemedText>
+                    </Pressable>
+                  </ThemedView>
+                </ThemedView>
+              )}
+              ListEmptyComponent={<ThemedText themeColor="textSecondary">Cart is empty.</ThemedText>}
+            />
+
+            <TextInput
+              value={cart.notes}
+              onChangeText={cart.setNotes}
+              placeholder="Order notes (optional)"
+              placeholderTextColor={theme.textSecondary}
+              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+            />
+
+            <ThemedText type="smallBold" style={styles.totalLine}>
+              Total: {fmt(cartTotal(cart.lines))}
+            </ThemedText>
+
+            <Pressable onPress={handleSubmit} disabled={submitting} style={[styles.submitButton, submitting && styles.submitButtonDisabled]}>
+              {submitting ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.submitButtonText}>Place Order</ThemedText>}
+            </Pressable>
+            <Pressable onPress={() => setCartOpen(false)} style={styles.closeButton}>
+              <ThemedText themeColor="textSecondary">Back to menu</ThemedText>
+            </Pressable>
+          </SafeAreaView>
+        </ThemedView>
+      </Modal>
+    </ThemedView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  safeArea: { flex: 1, paddingHorizontal: Spacing.three, gap: Spacing.two },
+  title: { marginTop: Spacing.two },
+  segmented: { flexDirection: 'row', gap: Spacing.two },
+  segment: { flex: 1, paddingVertical: Spacing.two, borderRadius: Spacing.two, alignItems: 'center', backgroundColor: 'rgba(128,128,128,0.15)' },
+  segmentActive: { backgroundColor: '#ea580c' },
+  segmentTextActive: { color: '#fff', fontWeight: '600' },
+  input: { borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, fontSize: 15 },
+  chipRow: { flexGrow: 0 },
+  chipRowContent: { gap: Spacing.one, paddingVertical: Spacing.half },
+  chip: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.one, borderRadius: Spacing.four, backgroundColor: 'rgba(128,128,128,0.15)' },
+  chipActive: { backgroundColor: '#ea580c' },
+  chipTextActive: { color: '#fff', fontWeight: '600' },
+  loading: { marginTop: Spacing.four },
+  menuList: { gap: Spacing.two, paddingBottom: Spacing.four },
+  menuRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, padding: Spacing.three },
+  menuRowInfo: { flex: 1 },
+  addButton: { backgroundColor: '#ea580c', borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one },
+  addButtonText: { color: '#fff', fontWeight: '600' },
+  qtyControl: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  qtyButton: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(128,128,128,0.2)', alignItems: 'center', justifyContent: 'center' },
+  qtyButtonText: { fontSize: 18, lineHeight: 20 },
+  qtyValue: { minWidth: 20, textAlign: 'center' },
+  removeButton: { marginLeft: Spacing.two },
+  removeButtonText: { color: '#dc2626' },
+  cartBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#ea580c', borderRadius: Spacing.three, padding: Spacing.three, marginBottom: Spacing.two },
+  cartBarText: { color: '#fff', fontWeight: '600' },
+  errorBox: { backgroundColor: '#fee2e2', borderRadius: Spacing.two, padding: Spacing.three, marginBottom: Spacing.two },
+  errorText: { color: '#dc2626' },
+  totalLine: { textAlign: 'right', marginVertical: Spacing.two },
+  submitButton: { backgroundColor: '#ea580c', borderRadius: Spacing.two, paddingVertical: Spacing.three, alignItems: 'center' },
+  submitButtonDisabled: { opacity: 0.6 },
+  submitButtonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
+  closeButton: { alignItems: 'center', paddingVertical: Spacing.three },
+});

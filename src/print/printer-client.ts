@@ -1,4 +1,4 @@
-import TcpSocket from 'react-native-tcp-socket';
+import { NativeModules } from 'react-native';
 
 const DEFAULT_PORT = 9100; // standard raw ESC/POS port on network thermal printers
 const CONNECT_TIMEOUT_MS = 4000;
@@ -9,6 +9,32 @@ export class PrinterError extends Error {
     super(message);
     this.name = 'PrinterError';
   }
+}
+
+type TcpSocketModule = typeof import('react-native-tcp-socket').default;
+
+
+/** Loaded on first use, not at app start: Expo Go doesn't contain this
+ * native module, and importing it eagerly would crash the whole app there.
+ * Everything except printing keeps working in Expo Go. */
+function loadTcpSocket(): TcpSocketModule {
+  // The native half is only present in the full app build, not in Expo Go.
+  if (!NativeModules.TcpSockets) {
+    throw new PrinterError('Direct printing needs the full RestaurantCafe Staff app. It is not available in Expo Go.');
+  }
+  let loaded: unknown;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    loaded = require('react-native-tcp-socket');
+  } catch (e) {
+    throw new PrinterError(`The printing library failed to load: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  // The library uses CommonJS `module.exports`, so there may be no `.default`.
+  const mod = ((loaded as { default?: TcpSocketModule }).default ?? loaded) as TcpSocketModule;
+  if (typeof mod.createConnection !== 'function') {
+    throw new PrinterError('The printing library loaded but does not provide a connection function.');
+  }
+  return mod;
 }
 
 /** Accepts "192.168.0.223" or "192.168.0.223:9100". */
@@ -29,7 +55,7 @@ export function sendToPrinter(address: string, data: Uint8Array): Promise<void> 
 
   return new Promise<void>((resolve, reject) => {
     let settled = false;
-    let socket: ReturnType<typeof TcpSocket.createConnection> | null = null;
+    let socket: ReturnType<TcpSocketModule["createConnection"]> | null = null;
 
     const finish = (err?: Error) => {
       if (settled) return;
@@ -52,7 +78,7 @@ export function sendToPrinter(address: string, data: Uint8Array): Promise<void> 
     );
 
     try {
-      socket = TcpSocket.createConnection({ host, port }, () => {
+      socket = loadTcpSocket().createConnection({ host, port }, () => {
         clearTimeout(connectTimer);
         socket?.write(data, undefined, (err) => {
           if (err) finish(new PrinterError(`Sending to the printer failed: ${err.message}`));

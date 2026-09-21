@@ -101,3 +101,19 @@ export async function resetStuckSyncing(): Promise<void> {
   const db = await getDb();
   await db.runAsync("UPDATE outbox SET status = 'pending' WHERE status = 'syncing'");
 }
+
+/** Edits the items of an order that is still queued on the phone. Only
+ * works while the entry is 'pending' — once it is being sent or has been
+ * refused it can't safely change, and the caller is told so. */
+export async function updateQueuedOrderItems(clientRef: string, items: CreateOrderInput['items'], display: OutboxDisplay): Promise<boolean> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<Row>("SELECT * FROM outbox WHERE client_ref = ? AND status = 'pending'", [clientRef]);
+  if (!row) return false;
+  const payload: CreateOrderInput = { ...(JSON.parse(row.payload) as CreateOrderInput), items };
+  const result = await db.runAsync("UPDATE outbox SET payload = ?, display = ? WHERE client_ref = ? AND status = 'pending'", [
+    JSON.stringify(payload),
+    JSON.stringify(display),
+    clientRef,
+  ]);
+  return result.changes > 0;
+}

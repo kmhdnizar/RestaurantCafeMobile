@@ -1,4 +1,5 @@
-import { ActivityIndicator, FlatList, RefreshControl, StyleSheet } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -30,6 +31,7 @@ type Row = { kind: 'local'; entry: OutboxEntry } | { kind: 'server'; order: Orde
 
 export default function MyOrdersScreen() {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const query = useQuery({ queryKey: ['orders', 'mine'], queryFn: fetchMyOrders });
   const outbox = useOutboxStore((s) => s.entries);
 
@@ -66,6 +68,7 @@ export default function MyOrdersScreen() {
               const { entry } = row;
               const failed = entry.status === 'failed';
               return (
+                <Pressable onPress={() => router.push({ pathname: '/edit-order', params: { kind: 'local', ref: entry.clientRef } })}>
                 <ThemedView type="backgroundElement" style={[styles.card, failed && styles.cardFailed]}>
                   <ThemedView type="backgroundElement" style={styles.cardHeader}>
                     <ThemedText type="smallBold">{entry.display.label}</ThemedText>
@@ -84,14 +87,17 @@ export default function MyOrdersScreen() {
                     </ThemedText>
                   ) : (
                     <ThemedText themeColor="textSecondary" type="small">
-                      Saved on this phone. It will send automatically when there&apos;s a connection.
+                      Saved on this phone. It will send automatically when there&apos;s a connection. Tap to edit.
                     </ThemedText>
                   )}
                 </ThemedView>
+                </Pressable>
               );
             }
             const { order } = row;
+            const editable = order.status !== 'SERVED' && order.status !== 'CANCELLED';
             return (
+              <Pressable disabled={!editable} onPress={() => router.push({ pathname: '/edit-order', params: { kind: 'server', ref: order.id } })}>
               <ThemedView type="backgroundElement" style={styles.card}>
                 <ThemedView type="backgroundElement" style={styles.cardHeader}>
                   <ThemedText type="smallBold">
@@ -106,7 +112,13 @@ export default function MyOrdersScreen() {
                     {line.quantity}× {line.menuItem.name}
                   </ThemedText>
                 ))}
+                {editable && (
+                  <ThemedText themeColor="textSecondary" type="small">
+                    Tap to edit
+                  </ThemedText>
+                )}
               </ThemedView>
+              </Pressable>
             );
           }}
         />

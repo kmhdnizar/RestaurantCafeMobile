@@ -41,6 +41,7 @@ export default function StaffLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="receipt-outline" color={color} size={size} />,
         }}
       />
+      <Tabs.Screen name="edit-order" options={{ href: null }} />
       <Tabs.Screen
         name="settings"
         options={{

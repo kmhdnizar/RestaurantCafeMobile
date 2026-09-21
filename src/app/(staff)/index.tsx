@@ -1,15 +1,13 @@
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useQuery } from '@tanstack/react-query';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useTheme } from '@/hooks/use-theme';
 import { Spacing } from '@/constants/theme';
-import { fetchMenuItems, fetchTables, fetchServingPeriods, fetchConfig } from '@/api/menu';
-import { getActiveServingPeriodIds, isItemVisible } from '@/lib/serving-period';
-import { formatCurrency, currencyToLocale, tableName } from '@/lib/format';
+import { tableName } from '@/lib/format';
+import { useOrderableMenu } from '@/hooks/use-orderable-menu';
 import { useCartStore, cartTotal } from '@/state/cart-store';
 import { enqueueOrder } from '@/offline/outbox';
 import { flushOutbox } from '@/offline/sync-engine';
@@ -20,10 +18,7 @@ export default function NewOrderScreen() {
   const theme = useTheme();
   const userId = useSessionStore((s) => s.user?.id ?? null);
 
-  const menuQuery = useQuery({ queryKey: ['menu-items'], queryFn: fetchMenuItems });
-  const tablesQuery = useQuery({ queryKey: ['tables'], queryFn: fetchTables });
-  const servingPeriodsQuery = useQuery({ queryKey: ['serving-periods'], queryFn: fetchServingPeriods });
-  const configQuery = useQuery({ queryKey: ['config'], queryFn: fetchConfig });
+  const { items: visibleItems, tables: activeTables, fmt, loading } = useOrderableMenu();
 
   const cart = useCartStore();
   const [search, setSearch] = useState('');
@@ -31,17 +26,6 @@ export default function NewOrderScreen() {
   const [cartOpen, setCartOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const currencyCode = configQuery.data?.currencyCode ?? 'MYR';
-  const currencyLocale = currencyToLocale(currencyCode);
-  const timezone = configQuery.data?.timezone ?? 'UTC';
-  const fmt = (v: number) => formatCurrency(v, currencyCode, currencyLocale);
-
-  const servingPeriods = servingPeriodsQuery.data ?? [];
-  const activeServingPeriodIds = useMemo(() => getActiveServingPeriodIds(servingPeriods, timezone), [servingPeriods, timezone]);
-
-  const allItems = menuQuery.data ?? [];
-  const visibleItems = allItems.filter((item) => item.available && isItemVisible(item.servingPeriods.map((sp) => sp.servingPeriod.id), servingPeriods, activeServingPeriodIds, false));
 
   const categories = useMemo(() => {
     const seen = new Map<string, string>();
@@ -54,8 +38,6 @@ export default function NewOrderScreen() {
     if (search.trim() && !item.name.toLowerCase().includes(search.trim().toLowerCase())) return false;
     return true;
   });
-
-  const activeTables = (tablesQuery.data ?? []).filter((t) => t.active);
 
   async function handleSubmit() {
     setError(null);
@@ -102,7 +84,6 @@ export default function NewOrderScreen() {
     }
   }
 
-  const loading = menuQuery.isLoading || tablesQuery.isLoading || servingPeriodsQuery.isLoading || configQuery.isLoading;
 
   return (
     <ThemedView style={styles.container}>

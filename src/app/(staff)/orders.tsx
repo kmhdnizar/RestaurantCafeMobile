@@ -10,6 +10,7 @@ import { fetchMyOrders, type OrderSummary } from '@/api/orders';
 import { flushOutbox } from '@/offline/sync-engine';
 import { useOutboxStore } from '@/state/outbox-store';
 import type { OutboxEntry } from '@/offline/outbox';
+import { ticketFromOutboxEntry, ticketFromServerOrder, useKitchenPrinter } from '@/print/use-kitchen-printer';
 
 const STATUS_LABEL: Record<OrderSummary['status'], string> = {
   PENDING: 'Pending',
@@ -32,6 +33,7 @@ type Row = { kind: 'local'; entry: OutboxEntry } | { kind: 'server'; order: Orde
 export default function MyOrdersScreen() {
   const queryClient = useQueryClient();
   const router = useRouter();
+  const kitchen = useKitchenPrinter();
   const query = useQuery({ queryKey: ['orders', 'mine'], queryFn: fetchMyOrders });
   const outbox = useOutboxStore((s) => s.entries);
 
@@ -90,6 +92,11 @@ export default function MyOrdersScreen() {
                       Saved on this phone. It will send automatically when there&apos;s a connection. Tap to edit.
                     </ThemedText>
                   )}
+                  {kitchen.enabled && !failed && (
+                    <Pressable onPress={() => void kitchen.print(ticketFromOutboxEntry(entry))} disabled={kitchen.printing} style={styles.printButton}>
+                      <ThemedText style={styles.printText}>{kitchen.printing ? 'Printing…' : 'Print ticket'}</ThemedText>
+                    </Pressable>
+                  )}
                 </ThemedView>
                 </Pressable>
               );
@@ -117,6 +124,11 @@ export default function MyOrdersScreen() {
                     Tap to edit
                   </ThemedText>
                 )}
+                {kitchen.enabled && (
+                  <Pressable onPress={() => void kitchen.print(ticketFromServerOrder(order))} disabled={kitchen.printing} style={styles.printButton}>
+                    <ThemedText style={styles.printText}>{kitchen.printing ? 'Printing…' : 'Print ticket'}</ThemedText>
+                  </Pressable>
+                )}
               </ThemedView>
               </Pressable>
             );
@@ -139,4 +151,6 @@ const styles = StyleSheet.create({
   statusPill: { paddingHorizontal: Spacing.two, paddingVertical: 2, borderRadius: Spacing.four },
   statusText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   failedText: { color: '#dc2626', marginTop: Spacing.one },
+  printButton: { alignSelf: 'flex-start', marginTop: Spacing.one, borderWidth: 1, borderColor: '#ea580c', borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one },
+  printText: { color: '#ea580c', fontWeight: '600', fontSize: 13 },
 });

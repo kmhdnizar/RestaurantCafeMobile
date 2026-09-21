@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "RestaurantCafeMobile",
+    "name": "RestaurantCafe Staff",
     "slug": "RestaurantCafeMobile",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,7 +8,11 @@
     "scheme": "restaurantcafemobile",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "bundleIdentifier": "com.restaurantcafe.staff",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "Used to send kitchen tickets directly to the printer on your restaurant WiFi."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -17,6 +21,7 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
+      "package": "com.restaurantcafe.staff",
       "predictiveBackGestureEnabled": false
     },
     "web": {

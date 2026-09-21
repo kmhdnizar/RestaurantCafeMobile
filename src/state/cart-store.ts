@@ -4,6 +4,7 @@ export interface CartLine {
   menuItemId: string;
   name: string;
   price: number;
+  category: string;
   quantity: number;
   notes: string;
 }
@@ -18,7 +19,7 @@ interface CartState {
   setTableId: (id: string) => void;
   setCustomerName: (name: string) => void;
   setNotes: (notes: string) => void;
-  addItem: (item: { id: string; name: string; price: string }) => void;
+  addItem: (item: { id: string; name: string; price: string; category: { name: string } }) => void;
   updateQuantity: (menuItemId: string, delta: number) => void;
   removeItem: (menuItemId: string) => void;
   reset: () => void;
@@ -46,7 +47,7 @@ export const useCartStore = create<CartState>((set) => ({
       if (existing) {
         return { lines: state.lines.map((l) => (l.menuItemId === item.id ? { ...l, quantity: l.quantity + 1 } : l)) };
       }
-      return { lines: [...state.lines, { menuItemId: item.id, name: item.name, price: Number(item.price), quantity: 1, notes: "" }] };
+      return { lines: [...state.lines, { menuItemId: item.id, name: item.name, price: Number(item.price), category: item.category.name, quantity: 1, notes: "" }] };
     }),
 
   updateQuantity: (menuItemId, delta) =>

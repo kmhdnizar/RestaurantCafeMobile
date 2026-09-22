@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -28,7 +28,6 @@ export default function NewOrderScreen() {
   const cart = useCartStore();
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
-  const [cartOpen, setCartOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -101,7 +100,6 @@ export default function NewOrderScreen() {
         cart.lines.map((l) => ({ menuItemId: l.menuItemId, name: l.name, category: l.category, quantity: l.quantity, notes: l.notes || null }))
       );
       cart.reset();
-      setCartOpen(false);
       await useOutboxStore.getState().refresh(userId);
       void flushOutbox();
       if (kitchen.enabled) void kitchen.print(ticketBody);
@@ -111,7 +109,6 @@ export default function NewOrderScreen() {
       setSubmitting(false);
     }
   }
-
 
   return (
     <ThemedView style={styles.container}>
@@ -147,6 +144,87 @@ export default function NewOrderScreen() {
           />
         )}
 
+        {error && (
+          <ThemedView style={styles.errorBox}>
+            <ThemedText style={styles.errorText}>{error}</ThemedText>
+          </ThemedView>
+        )}
+
+        {cart.lines.length > 0 && (
+          <>
+            <ThemedText type="smallBold">
+              Items in this order ({cart.lines.reduce((n, l) => n + l.quantity, 0)})
+            </ThemedText>
+            {/* Capped and independently scrollable — otherwise a long order
+                pushes the "Add items" search and results off screen. */}
+            <ScrollView style={styles.itemsScroll} nestedScrollEnabled contentContainerStyle={styles.itemsScrollContent}>
+              {cart.lines.map((line) => (
+                <ThemedView key={line.menuItemId} type="backgroundElement" style={styles.itemBlock}>
+                  <ThemedView type="backgroundElement" style={styles.menuRow}>
+                    <ThemedView type="backgroundElement" style={styles.menuRowInfo}>
+                      <ThemedText type="smallBold">{line.name}</ThemedText>
+                      {line.variablePrice ? (
+                        <ThemedView type="backgroundElement" style={styles.priceEditRow}>
+                          <ThemedText themeColor="textSecondary" type="small">
+                            Market price:
+                          </ThemedText>
+                          <TextInput
+                            value={line.priceText}
+                            onChangeText={(v) => cart.setLinePrice(line.menuItemId, v)}
+                            keyboardType="decimal-pad"
+                            placeholder="0.00"
+                            placeholderTextColor={theme.textSecondary}
+                            style={[styles.priceInput, { color: theme.text, backgroundColor: theme.background }]}
+                          />
+                        </ThemedView>
+                      ) : (
+                        <ThemedText themeColor="textSecondary" type="small">
+                          {fmt(line.price * line.quantity)}
+                        </ThemedText>
+                      )}
+                    </ThemedView>
+                    <ThemedView type="backgroundElement" style={styles.qtyControl}>
+                      <Pressable onPress={() => cart.updateQuantity(line.menuItemId, -1)} style={styles.qtyButton}>
+                        <ThemedText style={styles.qtyButtonText}>−</ThemedText>
+                      </Pressable>
+                      <ThemedText style={styles.qtyValue}>{line.quantity}</ThemedText>
+                      <Pressable onPress={() => cart.updateQuantity(line.menuItemId, 1)} style={styles.qtyButton}>
+                        <ThemedText style={styles.qtyButtonText}>+</ThemedText>
+                      </Pressable>
+                      <Pressable onPress={() => cart.removeItem(line.menuItemId)}>
+                        <ThemedText style={styles.removeText}>✕</ThemedText>
+                      </Pressable>
+                    </ThemedView>
+                  </ThemedView>
+                  <TextInput
+                    value={line.notes}
+                    onChangeText={(v) => cart.setLineNotes(line.menuItemId, v)}
+                    placeholder="Note for this item (size, allergy, extra request…)"
+                    placeholderTextColor={theme.textSecondary}
+                    style={[styles.noteInput, { color: theme.text, backgroundColor: theme.background }]}
+                  />
+                </ThemedView>
+              ))}
+            </ScrollView>
+
+            <TextInput
+              value={cart.notes}
+              onChangeText={cart.setNotes}
+              placeholder="Order notes (optional)"
+              placeholderTextColor={theme.textSecondary}
+              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+            />
+
+            <ThemedView type="backgroundElement" style={styles.totalRow}>
+              <ThemedText type="smallBold">Total</ThemedText>
+              <ThemedText type="smallBold">{fmt(cartTotal(cart.lines))}</ThemedText>
+            </ThemedView>
+          </>
+        )}
+
+        <ThemedText type="smallBold" style={styles.sectionGap}>
+          Add items
+        </ThemedText>
         <TextInput
           value={search}
           onChangeText={setSearch}
@@ -173,6 +251,7 @@ export default function NewOrderScreen() {
           data={filteredItems}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.menuList}
+          keyboardShouldPersistTaps="handled"
           renderItem={({ item }) => {
             const line = cart.lines.find((l) => l.menuItemId === item.id);
             return (
@@ -204,104 +283,10 @@ export default function NewOrderScreen() {
           ListEmptyComponent={!loading ? <ThemedText themeColor="textSecondary">No items match right now.</ThemedText> : null}
         />
 
-        {cart.lines.length > 0 && (
-          <Pressable onPress={() => setCartOpen(true)} style={styles.cartBar}>
-            <ThemedText style={styles.cartBarText}>
-              {cart.lines.reduce((n, l) => n + l.quantity, 0)} item{cart.lines.length !== 1 ? 's' : ''} · {fmt(cartTotal(cart.lines))}
-            </ThemedText>
-            <ThemedText style={styles.cartBarText}>Review →</ThemedText>
-          </Pressable>
-        )}
+        <Pressable onPress={handleSubmit} disabled={submitting || cart.lines.length === 0} style={[styles.submitButton, (submitting || cart.lines.length === 0) && styles.submitButtonDisabled]}>
+          {submitting ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.submitButtonText}>Place Order</ThemedText>}
+        </Pressable>
       </SafeAreaView>
-
-      <Modal visible={cartOpen} animationType="slide" onRequestClose={() => setCartOpen(false)}>
-        <ThemedView style={styles.container}>
-          <SafeAreaView style={styles.safeArea}>
-            <ThemedText type="subtitle" style={styles.title}>
-              Your Order
-            </ThemedText>
-
-            {error && (
-              <ThemedView style={styles.errorBox}>
-                <ThemedText style={styles.errorText}>{error}</ThemedText>
-              </ThemedView>
-            )}
-
-            <FlatList
-              data={cart.lines}
-              keyExtractor={(l) => l.menuItemId}
-              contentContainerStyle={styles.menuList}
-              renderItem={({ item: line }) => (
-                <ThemedView type="backgroundElement" style={styles.cartLine}>
-                  <ThemedView type="backgroundElement" style={styles.menuRow}>
-                    <ThemedView type="backgroundElement" style={styles.menuRowInfo}>
-                      <ThemedText type="smallBold">{line.name}</ThemedText>
-                      {line.variablePrice ? (
-                        <ThemedView type="backgroundElement" style={styles.priceEditRow}>
-                          <ThemedText themeColor="textSecondary" type="small">
-                            Market price:
-                          </ThemedText>
-                          <TextInput
-                            value={line.price === 0 ? '' : String(line.price)}
-                            onChangeText={(v) => cart.setLinePrice(line.menuItemId, Number(v.replace(/[^0-9.]/g, '')) || 0)}
-                            keyboardType="decimal-pad"
-                            placeholder="0.00"
-                            placeholderTextColor={theme.textSecondary}
-                            style={[styles.priceInput, { color: theme.text, backgroundColor: theme.background }]}
-                          />
-                        </ThemedView>
-                      ) : (
-                        <ThemedText themeColor="textSecondary" type="small">
-                          {fmt(line.price * line.quantity)}
-                        </ThemedText>
-                      )}
-                    </ThemedView>
-                    <ThemedView type="backgroundElement" style={styles.qtyControl}>
-                      <Pressable onPress={() => cart.updateQuantity(line.menuItemId, -1)} style={styles.qtyButton}>
-                        <ThemedText style={styles.qtyButtonText}>−</ThemedText>
-                      </Pressable>
-                      <ThemedText style={styles.qtyValue}>{line.quantity}</ThemedText>
-                      <Pressable onPress={() => cart.updateQuantity(line.menuItemId, 1)} style={styles.qtyButton}>
-                        <ThemedText style={styles.qtyButtonText}>+</ThemedText>
-                      </Pressable>
-                      <Pressable onPress={() => cart.removeItem(line.menuItemId)} style={styles.removeButton}>
-                        <ThemedText style={styles.removeButtonText}>✕</ThemedText>
-                      </Pressable>
-                    </ThemedView>
-                  </ThemedView>
-                  <TextInput
-                    value={line.notes}
-                    onChangeText={(v) => cart.setLineNotes(line.menuItemId, v)}
-                    placeholder="Note for this item (size, allergy, extra request…)"
-                    placeholderTextColor={theme.textSecondary}
-                    style={[styles.noteInput, { color: theme.text, backgroundColor: theme.background }]}
-                  />
-                </ThemedView>
-              )}
-              ListEmptyComponent={<ThemedText themeColor="textSecondary">Cart is empty.</ThemedText>}
-            />
-
-            <TextInput
-              value={cart.notes}
-              onChangeText={cart.setNotes}
-              placeholder="Order notes (optional)"
-              placeholderTextColor={theme.textSecondary}
-              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-            />
-
-            <ThemedText type="smallBold" style={styles.totalLine}>
-              Total: {fmt(cartTotal(cart.lines))}
-            </ThemedText>
-
-            <Pressable onPress={handleSubmit} disabled={submitting} style={[styles.submitButton, submitting && styles.submitButtonDisabled]}>
-              {submitting ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.submitButtonText}>Place Order</ThemedText>}
-            </Pressable>
-            <Pressable onPress={() => setCartOpen(false)} style={styles.closeButton}>
-              <ThemedText themeColor="textSecondary">Back to menu</ThemedText>
-            </Pressable>
-          </SafeAreaView>
-        </ThemedView>
-      </Modal>
     </ThemedView>
   );
 }
@@ -325,7 +310,9 @@ const styles = StyleSheet.create({
   menuList: { gap: Spacing.two, paddingBottom: Spacing.four },
   menuRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, padding: Spacing.three },
   menuRowInfo: { flex: 1 },
-  cartLine: { borderRadius: Spacing.three, overflow: 'hidden' },
+  itemBlock: { borderRadius: Spacing.three, overflow: 'hidden' },
+  itemsScroll: { maxHeight: 220, flexGrow: 0 },
+  itemsScrollContent: { gap: Spacing.two },
   priceEditRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, marginTop: 2 },
   priceInput: { borderRadius: Spacing.one, paddingHorizontal: Spacing.two, paddingVertical: 4, fontSize: 13, minWidth: 70 },
   noteInput: { marginHorizontal: Spacing.three, marginBottom: Spacing.two, borderRadius: Spacing.one, paddingHorizontal: Spacing.two, paddingVertical: Spacing.one, fontSize: 13 },
@@ -335,15 +322,12 @@ const styles = StyleSheet.create({
   qtyButton: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(128,128,128,0.2)', alignItems: 'center', justifyContent: 'center' },
   qtyButtonText: { fontSize: 18, lineHeight: 20 },
   qtyValue: { minWidth: 20, textAlign: 'center' },
-  removeButton: { marginLeft: Spacing.two },
-  removeButtonText: { color: '#dc2626' },
-  cartBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#ea580c', borderRadius: Spacing.three, padding: Spacing.three, marginBottom: Spacing.two },
-  cartBarText: { color: '#fff', fontWeight: '600' },
-  errorBox: { backgroundColor: '#fee2e2', borderRadius: Spacing.two, padding: Spacing.three, marginBottom: Spacing.two },
+  removeText: { color: '#dc2626', marginLeft: Spacing.two },
+  sectionGap: { marginTop: Spacing.two },
+  totalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
+  errorBox: { backgroundColor: '#fee2e2', borderRadius: Spacing.two, padding: Spacing.three },
   errorText: { color: '#dc2626' },
-  totalLine: { textAlign: 'right', marginVertical: Spacing.two },
-  submitButton: { backgroundColor: '#ea580c', borderRadius: Spacing.two, paddingVertical: Spacing.three, alignItems: 'center' },
+  submitButton: { backgroundColor: '#ea580c', borderRadius: Spacing.two, paddingVertical: Spacing.three, alignItems: 'center', marginTop: Spacing.two },
   submitButtonDisabled: { opacity: 0.6 },
   submitButtonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  closeButton: { alignItems: 'center', paddingVertical: Spacing.three },
 });

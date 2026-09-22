@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, TextInput } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -15,12 +15,17 @@ import { addItem, fetchMyOrders, removeItem, setItemQuantity } from '@/api/order
 import { updateQueuedOrderItems } from '@/offline/outbox';
 import { useOutboxStore } from '@/state/outbox-store';
 import { useSessionStore } from '@/state/session-store';
+import { tableName } from '@/lib/format';
+import { useKitchenPrinter } from '@/print/use-kitchen-printer';
+import { groupByCategory } from '@/print/escpos';
+import { diffAgainstSnapshot, getPrintSnapshot, localOrderKey, serverOrderKey, setPrintSnapshot, type SnapshotLine } from '@/offline/print-snapshot';
 
 interface Line {
   menuItemId: string;
   name: string;
   quantity: number;
   category?: string;
+  price?: number;
 }
 
 /**
@@ -34,9 +39,11 @@ export default function EditOrderScreen() {
   const theme = useTheme();
   const queryClient = useQueryClient();
   const userId = useSessionStore((s) => s.user?.id ?? null);
+  const userName = useSessionStore((s) => s.user?.name ?? null);
   const outbox = useOutboxStore((s) => s.entries);
   const ordersQuery = useQuery({ queryKey: ['orders', 'mine'], queryFn: fetchMyOrders });
   const { items: menuItems, fmt } = useOrderableMenu();
+  const kitchen = useKitchenPrinter();
 
   const localEntry = kind === 'local' ? outbox.find((e) => e.clientRef === ref) : undefined;
   const serverOrder = kind === 'server' ? ordersQuery.data?.find((o) => o.id === ref) : undefined;
@@ -46,13 +53,20 @@ export default function EditOrderScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load the starting lines once, from whichever source applies.
+  // Expo Router can reuse this same screen instance when navigating from one
+  // order straight to another, so `lines` must be dropped whenever the order
+  // being edited changes — otherwise the previous order's items stick around.
+  useEffect(() => {
+    setLines(null);
+  }, [ref]);
+
+  // Then load the starting lines for whichever order is now selected.
   useEffect(() => {
     if (lines) return;
     if (localEntry) {
-      setLines(localEntry.payload.items.map((it, i) => ({ menuItemId: it.menuItemId, name: localEntry.display.lines[i]?.name ?? 'Item', quantity: it.quantity, category: localEntry.display.lines[i]?.category })));
+      setLines(localEntry.payload.items.map((it, i) => ({ menuItemId: it.menuItemId, name: localEntry.display.lines[i]?.name ?? 'Item', quantity: it.quantity, category: localEntry.display.lines[i]?.category, price: localEntry.display.lines[i]?.price })));
     } else if (serverOrder) {
-      setLines(serverOrder.items.map((it) => ({ menuItemId: it.menuItem.id, name: it.menuItem.name, quantity: it.quantity, category: it.menuItem.category?.name })));
+      setLines(serverOrder.items.map((it) => ({ menuItemId: it.menuItem.id, name: it.menuItem.name, quantity: it.quantity, category: it.menuItem.category?.name, price: Number(it.unitPrice) })));
     }
   }, [lines, localEntry, serverOrder]);
 
@@ -80,12 +94,12 @@ export default function EditOrderScreen() {
     });
   }
 
-  function addLine(item: { id: string; name: string; category?: { name: string } }) {
+  function addLine(item: { id: string; name: string; price: string; category?: { name: string } }) {
     setLines((prev) => {
       if (!prev) return prev;
       const existing = prev.find((l) => l.menuItemId === item.id);
       if (existing) return prev.map((l) => (l.menuItemId === item.id ? { ...l, quantity: l.quantity + 1 } : l));
-      return [...prev, { menuItemId: item.id, name: item.name, quantity: 1, category: item.category?.name }];
+      return [...prev, { menuItemId: item.id, name: item.name, quantity: 1, category: item.category?.name, price: Number(item.price) }];
     });
   }
 
@@ -101,7 +115,7 @@ export default function EditOrderScreen() {
         const ok = await updateQueuedOrderItems(
           localEntry.clientRef,
           lines.map((l) => ({ menuItemId: l.menuItemId, quantity: l.quantity })),
-          { label: localEntry.display.label, lines: lines.map((l) => ({ name: l.name, quantity: l.quantity, category: l.category })) }
+          { label: localEntry.display.label, waiter: localEntry.display.waiter, lines: lines.map((l) => ({ name: l.name, quantity: l.quantity, category: l.category, price: l.price })) }
         );
         if (!ok) {
           setError('This order was just sent, so it can no longer be changed here. Go back and open it again.');
@@ -133,6 +147,31 @@ export default function EditOrderScreen() {
         }
         await queryClient.invalidateQueries({ queryKey: ['orders', 'mine'] });
       }
+
+      // Print only what changed since the last time this order was sent to
+      // the kitchen, not the whole order again — otherwise every edit would
+      // look like a duplicate ticket for items already being cooked.
+      const snapshotKey = kind === 'local' && localEntry ? localOrderKey(localEntry.clientRef) : kind === 'server' && serverOrder ? serverOrderKey(serverOrder.id) : null;
+      if (snapshotKey) {
+        const currentSnapshot: SnapshotLine[] = lines.map((l) => ({ menuItemId: l.menuItemId, name: l.name, category: l.category ?? 'Other', quantity: l.quantity }));
+        const previous = await getPrintSnapshot(snapshotKey);
+        const delta = diffAgainstSnapshot(currentSnapshot, previous);
+        if (kitchen.enabled && (delta.added.length || delta.removed.length)) {
+          const orderLabel = localEntry ? localEntry.display.label : serverOrder ? (serverOrder.type === 'DINE_IN' ? (serverOrder.table ? tableName(serverOrder.table) : 'Table') : (serverOrder.customerName ?? 'Takeaway')) : '';
+          void kitchen.print({
+            orderNumber: serverOrder?.orderNumber ?? null,
+            waiter: localEntry?.display.waiter ?? serverOrder?.waiter?.name ?? userName,
+            label: orderLabel,
+            kind: 'update',
+            categories: groupByCategory([
+              ...delta.added.map((l) => ({ qty: l.quantity, name: l.name, category: l.category })),
+              ...delta.removed.map((l) => ({ qty: l.quantity, name: l.name, category: l.category, cancelled: true })),
+            ]),
+          });
+        }
+        await setPrintSnapshot(snapshotKey, currentSnapshot);
+      }
+
       router.back();
     } finally {
       setSaving(false);
@@ -182,24 +221,30 @@ export default function EditOrderScreen() {
               </ThemedView>
             )}
 
-            <ThemedText type="smallBold">Items on this order</ThemedText>
-            {lines.map((l) => (
-              <ThemedView key={l.menuItemId} type="backgroundElement" style={styles.row}>
-                <ThemedText style={styles.rowName}>{l.name}</ThemedText>
-                <ThemedView type="backgroundElement" style={styles.qtyControl}>
-                  <Pressable onPress={() => changeQty(l.menuItemId, -1)} style={styles.qtyButton}>
-                    <ThemedText style={styles.qtyButtonText}>−</ThemedText>
-                  </Pressable>
-                  <ThemedText style={styles.qtyValue}>{l.quantity}</ThemedText>
-                  <Pressable onPress={() => changeQty(l.menuItemId, 1)} style={styles.qtyButton}>
-                    <ThemedText style={styles.qtyButtonText}>+</ThemedText>
-                  </Pressable>
-                  <Pressable onPress={() => removeLine(l.menuItemId)}>
-                    <ThemedText style={styles.removeText}>✕</ThemedText>
-                  </Pressable>
+            <ThemedText type="smallBold">
+              Items on this order ({lines.length})
+            </ThemedText>
+            {/* Capped and independently scrollable — otherwise a long order
+                pushes the "Add items" search and results off screen. */}
+            <ScrollView style={styles.itemsScroll} nestedScrollEnabled contentContainerStyle={styles.itemsScrollContent}>
+              {lines.map((l) => (
+                <ThemedView key={l.menuItemId} type="backgroundElement" style={styles.row}>
+                  <ThemedText style={styles.rowName}>{l.name}</ThemedText>
+                  <ThemedView type="backgroundElement" style={styles.qtyControl}>
+                    <Pressable onPress={() => changeQty(l.menuItemId, -1)} style={styles.qtyButton}>
+                      <ThemedText style={styles.qtyButtonText}>−</ThemedText>
+                    </Pressable>
+                    <ThemedText style={styles.qtyValue}>{l.quantity}</ThemedText>
+                    <Pressable onPress={() => changeQty(l.menuItemId, 1)} style={styles.qtyButton}>
+                      <ThemedText style={styles.qtyButtonText}>+</ThemedText>
+                    </Pressable>
+                    <Pressable onPress={() => removeLine(l.menuItemId)}>
+                      <ThemedText style={styles.removeText}>✕</ThemedText>
+                    </Pressable>
+                  </ThemedView>
                 </ThemedView>
-              </ThemedView>
-            ))}
+              ))}
+            </ScrollView>
 
             <ThemedText type="smallBold" style={styles.sectionGap}>
               Add items
@@ -257,7 +302,9 @@ const styles = StyleSheet.create({
   removeText: { color: '#dc2626', marginLeft: Spacing.two },
   sectionGap: { marginTop: Spacing.two },
   input: { borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, fontSize: 15 },
-  menuList: { flex: 1 },
+  itemsScroll: { maxHeight: 220, flexGrow: 0 },
+  itemsScrollContent: { gap: Spacing.two },
+  menuList: { flex: 1, minHeight: 120 },
   menuListContent: { gap: Spacing.two },
   addButton: { backgroundColor: '#ea580c', borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one },
   addButtonText: { color: '#fff', fontWeight: '600' },

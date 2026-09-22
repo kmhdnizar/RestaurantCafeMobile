@@ -9,7 +9,8 @@ export type OutboxStatus = 'pending' | 'syncing' | 'failed';
  * captured at save time so no menu lookup is needed later. */
 export interface OutboxDisplay {
   label: string;
-  lines: { name: string; quantity: number; category?: string }[];
+  waiter?: string;
+  lines: { name: string; quantity: number; category?: string; price?: number }[];
 }
 
 export interface OutboxEntry {

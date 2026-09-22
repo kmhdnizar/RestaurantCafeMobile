@@ -30,6 +30,18 @@ export default function NewOrderScreen() {
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Notes start collapsed so a cart line without one stays a single compact
+  // row — otherwise every added item reserves space for a field most
+  // orders never use, squeezing out the "Add items" list below it.
+  const [openNotes, setOpenNotes] = useState<Set<string>>(new Set());
+  function toggleNotes(menuItemId: string) {
+    setOpenNotes((prev) => {
+      const next = new Set(prev);
+      if (next.has(menuItemId)) next.delete(menuItemId);
+      else next.add(menuItemId);
+      return next;
+    });
+  }
 
   const categories = useMemo(() => {
     const seen = new Map<string, string>();
@@ -59,18 +71,24 @@ export default function NewOrderScreen() {
     }
     if (!userId) return;
     setSubmitting(true);
+
+    const table = activeTables.find((t) => t.id === cart.tableId);
+    const label = cart.orderType === 'DINE_IN' ? (table ? tableName(table) : 'Table') : cart.customerName.trim();
+    const lines = cart.lines;
+
+    // The only step that can genuinely fail to save the order is this local
+    // write — everything after it (syncing, printing) is best-effort and
+    // must never make the waiter think a saved order wasn't created.
+    let clientRef: string;
     try {
-      // Always saved on the phone first, then sent in the background — one
-      // code path whether or not there's a connection right now.
-      const table = activeTables.find((t) => t.id === cart.tableId);
-      const clientRef = await enqueueOrder(
+      clientRef = await enqueueOrder(
         userId,
         {
           type: cart.orderType,
           tableId: cart.orderType === 'DINE_IN' ? cart.tableId : undefined,
           customerName: cart.orderType === 'TAKEAWAY' ? cart.customerName.trim() : undefined,
           notes: cart.notes || undefined,
-          items: cart.lines.map((l) => ({
+          items: lines.map((l) => ({
             menuItemId: l.menuItemId,
             quantity: l.quantity,
             notes: l.notes || undefined,
@@ -78,35 +96,42 @@ export default function NewOrderScreen() {
           })),
         },
         {
-          label: cart.orderType === 'DINE_IN' ? (table ? tableName(table) : 'Table') : cart.customerName.trim(),
+          label,
           waiter: userName ?? undefined,
-          lines: cart.lines.map((l) => ({ name: l.name, quantity: l.quantity, category: l.category, price: l.price })),
+          lines: lines.map((l) => ({ name: l.name, quantity: l.quantity, category: l.category, price: l.price })),
         }
       );
-      // Built from the cart before it is cleared. Printed straight away from
-      // this data — it doesn't wait for the order to reach the server, so
-      // the kitchen gets the ticket even when the internet is down.
-      const ticketBody = {
-        orderNumber: null,
-        waiter: userName,
-        label: cart.orderType === 'DINE_IN' ? (table ? tableName(table) : 'Table') : cart.customerName.trim(),
-        isParcel: cart.orderType === 'TAKEAWAY',
-        categories: groupByCategory(cart.lines.map((l) => ({ qty: l.quantity, name: l.name, notes: l.notes || null, category: l.category }))),
-      };
-      // Record what's been sent so a later edit only prints the *change*,
-      // not the whole order again.
-      void setPrintSnapshot(
-        localOrderKey(clientRef),
-        cart.lines.map((l) => ({ menuItemId: l.menuItemId, name: l.name, category: l.category, quantity: l.quantity, notes: l.notes || null }))
-      );
-      cart.reset();
-      await useOutboxStore.getState().refresh(userId);
-      void flushOutbox();
-      if (kitchen.enabled) void kitchen.print(ticketBody);
     } catch {
       setError('Could not save the order on this phone. Please try again.');
-    } finally {
       setSubmitting(false);
+      return;
+    }
+
+    // The order is safely queued locally from here on — clear the cart and
+    // let sync/printing happen in the background regardless of outcome.
+    cart.reset();
+    setSubmitting(false);
+
+    try {
+      void setPrintSnapshot(
+        localOrderKey(clientRef),
+        lines.map((l) => ({ menuItemId: l.menuItemId, name: l.name, category: l.category, quantity: l.quantity, notes: l.notes || null }))
+      );
+      await useOutboxStore.getState().refresh(userId);
+      void flushOutbox();
+      if (kitchen.enabled) {
+        void kitchen.print({
+          orderNumber: null,
+          waiter: userName,
+          label,
+          isParcel: cart.orderType === 'TAKEAWAY',
+          categories: groupByCategory(lines.map((l) => ({ qty: l.quantity, name: l.name, notes: l.notes || null, category: l.category }))),
+        });
+      }
+    } catch (e) {
+      // The order itself is safe on the phone — this is just the "My
+      // Orders" list / kitchen ticket not refreshing right away.
+      console.warn('New order: a post-save step failed', e);
     }
   }
 
@@ -158,53 +183,64 @@ export default function NewOrderScreen() {
             {/* Capped and independently scrollable — otherwise a long order
                 pushes the "Add items" search and results off screen. */}
             <ScrollView style={styles.itemsScroll} nestedScrollEnabled contentContainerStyle={styles.itemsScrollContent}>
-              {cart.lines.map((line) => (
-                <ThemedView key={line.menuItemId} type="backgroundElement" style={styles.itemBlock}>
-                  <ThemedView type="backgroundElement" style={styles.menuRow}>
-                    <ThemedView type="backgroundElement" style={styles.menuRowInfo}>
-                      <ThemedText type="smallBold">{line.name}</ThemedText>
-                      {line.variablePrice ? (
-                        <ThemedView type="backgroundElement" style={styles.priceEditRow}>
+              {cart.lines.map((line) => {
+                const noteOpen = openNotes.has(line.menuItemId) || !!line.notes;
+                return (
+                  <ThemedView key={line.menuItemId} type="backgroundElement" style={styles.itemBlock}>
+                    <ThemedView type="backgroundElement" style={styles.menuRow}>
+                      <ThemedView type="backgroundElement" style={styles.menuRowInfo}>
+                        <ThemedText type="smallBold">{line.name}</ThemedText>
+                        {line.variablePrice ? (
+                          <ThemedView type="backgroundElement" style={styles.priceEditRow}>
+                            <TextInput
+                              value={line.priceText}
+                              onChangeText={(v) => cart.setLinePrice(line.menuItemId, v)}
+                              keyboardType="decimal-pad"
+                              placeholder="Market price"
+                              placeholderTextColor={theme.textSecondary}
+                              style={[styles.priceInput, { color: theme.text, backgroundColor: theme.background }]}
+                            />
+                            <ThemedText themeColor="textSecondary" type="small">
+                              = {fmt(line.price * line.quantity)}
+                            </ThemedText>
+                          </ThemedView>
+                        ) : (
                           <ThemedText themeColor="textSecondary" type="small">
-                            Market price:
+                            {fmt(line.price * line.quantity)}
                           </ThemedText>
-                          <TextInput
-                            value={line.priceText}
-                            onChangeText={(v) => cart.setLinePrice(line.menuItemId, v)}
-                            keyboardType="decimal-pad"
-                            placeholder="0.00"
-                            placeholderTextColor={theme.textSecondary}
-                            style={[styles.priceInput, { color: theme.text, backgroundColor: theme.background }]}
-                          />
-                        </ThemedView>
-                      ) : (
+                        )}
+                      </ThemedView>
+                      <ThemedView type="backgroundElement" style={styles.qtyControl}>
+                        <Pressable onPress={() => cart.updateQuantity(line.menuItemId, -1)} style={styles.qtyButton}>
+                          <ThemedText style={styles.qtyButtonText}>−</ThemedText>
+                        </Pressable>
+                        <ThemedText style={styles.qtyValue}>{line.quantity}</ThemedText>
+                        <Pressable onPress={() => cart.updateQuantity(line.menuItemId, 1)} style={styles.qtyButton}>
+                          <ThemedText style={styles.qtyButtonText}>+</ThemedText>
+                        </Pressable>
+                        <Pressable onPress={() => cart.removeItem(line.menuItemId)}>
+                          <ThemedText style={styles.removeText}>✕</ThemedText>
+                        </Pressable>
+                      </ThemedView>
+                    </ThemedView>
+                    {noteOpen ? (
+                      <TextInput
+                        value={line.notes}
+                        onChangeText={(v) => cart.setLineNotes(line.menuItemId, v)}
+                        placeholder="Note for this item (size, allergy, extra request…)"
+                        placeholderTextColor={theme.textSecondary}
+                        style={[styles.noteInput, { color: theme.text, backgroundColor: theme.background }]}
+                      />
+                    ) : (
+                      <Pressable onPress={() => toggleNotes(line.menuItemId)} style={styles.addNoteButton}>
                         <ThemedText themeColor="textSecondary" type="small">
-                          {fmt(line.price * line.quantity)}
+                          + Add note
                         </ThemedText>
-                      )}
-                    </ThemedView>
-                    <ThemedView type="backgroundElement" style={styles.qtyControl}>
-                      <Pressable onPress={() => cart.updateQuantity(line.menuItemId, -1)} style={styles.qtyButton}>
-                        <ThemedText style={styles.qtyButtonText}>−</ThemedText>
                       </Pressable>
-                      <ThemedText style={styles.qtyValue}>{line.quantity}</ThemedText>
-                      <Pressable onPress={() => cart.updateQuantity(line.menuItemId, 1)} style={styles.qtyButton}>
-                        <ThemedText style={styles.qtyButtonText}>+</ThemedText>
-                      </Pressable>
-                      <Pressable onPress={() => cart.removeItem(line.menuItemId)}>
-                        <ThemedText style={styles.removeText}>✕</ThemedText>
-                      </Pressable>
-                    </ThemedView>
+                    )}
                   </ThemedView>
-                  <TextInput
-                    value={line.notes}
-                    onChangeText={(v) => cart.setLineNotes(line.menuItemId, v)}
-                    placeholder="Note for this item (size, allergy, extra request…)"
-                    placeholderTextColor={theme.textSecondary}
-                    style={[styles.noteInput, { color: theme.text, backgroundColor: theme.background }]}
-                  />
-                </ThemedView>
-              ))}
+                );
+              })}
             </ScrollView>
 
             <TextInput
@@ -306,16 +342,17 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: '#ea580c' },
   chipTextActive: { color: '#fff', fontWeight: '600' },
   loading: { marginTop: Spacing.four },
-  menuFlex: { flex: 1 },
+  menuFlex: { flex: 1, minHeight: 180 },
   menuList: { gap: Spacing.two, paddingBottom: Spacing.four },
-  menuRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, padding: Spacing.three },
+  menuRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
   menuRowInfo: { flex: 1 },
   itemBlock: { borderRadius: Spacing.three, overflow: 'hidden' },
-  itemsScroll: { maxHeight: 220, flexGrow: 0 },
-  itemsScrollContent: { gap: Spacing.two },
+  itemsScroll: { maxHeight: 170, flexGrow: 0 },
+  itemsScrollContent: { gap: Spacing.one },
   priceEditRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, marginTop: 2 },
   priceInput: { borderRadius: Spacing.one, paddingHorizontal: Spacing.two, paddingVertical: 4, fontSize: 13, minWidth: 70 },
   noteInput: { marginHorizontal: Spacing.three, marginBottom: Spacing.two, borderRadius: Spacing.one, paddingHorizontal: Spacing.two, paddingVertical: Spacing.one, fontSize: 13 },
+  addNoteButton: { marginHorizontal: Spacing.three, marginBottom: Spacing.two },
   addButton: { backgroundColor: '#ea580c', borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one },
   addButtonText: { color: '#fff', fontWeight: '600' },
   qtyControl: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },

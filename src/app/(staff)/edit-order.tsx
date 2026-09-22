@@ -60,6 +60,16 @@ export default function EditOrderScreen() {
   const [search, setSearch] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Notes start collapsed so a line without one stays a single compact row.
+  const [openNotes, setOpenNotes] = useState<Set<string>>(new Set());
+  function toggleNotes(menuItemId: string) {
+    setOpenNotes((prev) => {
+      const next = new Set(prev);
+      if (next.has(menuItemId)) next.delete(menuItemId);
+      else next.add(menuItemId);
+      return next;
+    });
+  }
 
   // Expo Router can reuse this same screen instance when navigating from one
   // order straight to another, so `lines` must be dropped whenever the order
@@ -303,49 +313,60 @@ export default function EditOrderScreen() {
             {/* Capped and independently scrollable — otherwise a long order
                 pushes the "Add items" search and results off screen. */}
             <ScrollView style={styles.itemsScroll} nestedScrollEnabled contentContainerStyle={styles.itemsScrollContent}>
-              {lines.map((l) => (
-                <ThemedView key={l.menuItemId} type="backgroundElement" style={styles.itemBlock}>
-                  <ThemedView type="backgroundElement" style={styles.row}>
-                    <ThemedView type="backgroundElement" style={styles.rowName}>
-                      <ThemedText>{l.name}</ThemedText>
-                      {l.variablePrice && (
-                        <ThemedView type="backgroundElement" style={styles.priceEditRow}>
-                          <ThemedText themeColor="textSecondary" type="small">
-                            Market price:
-                          </ThemedText>
-                          <TextInput
-                            value={l.priceText ?? ''}
-                            onChangeText={(v) => changePrice(l.menuItemId, v)}
-                            keyboardType="decimal-pad"
-                            placeholder="0.00"
-                            placeholderTextColor={theme.textSecondary}
-                            style={[styles.priceInput, { color: theme.text, backgroundColor: theme.background }]}
-                          />
-                        </ThemedView>
-                      )}
+              {lines.map((l) => {
+                const noteOpen = openNotes.has(l.menuItemId) || !!l.notes;
+                return (
+                  <ThemedView key={l.menuItemId} type="backgroundElement" style={styles.itemBlock}>
+                    <ThemedView type="backgroundElement" style={styles.row}>
+                      <ThemedView type="backgroundElement" style={styles.rowName}>
+                        <ThemedText>{l.name}</ThemedText>
+                        {l.variablePrice && (
+                          <ThemedView type="backgroundElement" style={styles.priceEditRow}>
+                            <TextInput
+                              value={l.priceText ?? ''}
+                              onChangeText={(v) => changePrice(l.menuItemId, v)}
+                              keyboardType="decimal-pad"
+                              placeholder="Market price"
+                              placeholderTextColor={theme.textSecondary}
+                              style={[styles.priceInput, { color: theme.text, backgroundColor: theme.background }]}
+                            />
+                            <ThemedText themeColor="textSecondary" type="small">
+                              = {fmt((l.price ?? 0) * l.quantity)}
+                            </ThemedText>
+                          </ThemedView>
+                        )}
+                      </ThemedView>
+                      <ThemedView type="backgroundElement" style={styles.qtyControl}>
+                        <Pressable onPress={() => changeQty(l.menuItemId, -1)} style={styles.qtyButton}>
+                          <ThemedText style={styles.qtyButtonText}>−</ThemedText>
+                        </Pressable>
+                        <ThemedText style={styles.qtyValue}>{l.quantity}</ThemedText>
+                        <Pressable onPress={() => changeQty(l.menuItemId, 1)} style={styles.qtyButton}>
+                          <ThemedText style={styles.qtyButtonText}>+</ThemedText>
+                        </Pressable>
+                        <Pressable onPress={() => removeLine(l.menuItemId)}>
+                          <ThemedText style={styles.removeText}>✕</ThemedText>
+                        </Pressable>
+                      </ThemedView>
                     </ThemedView>
-                    <ThemedView type="backgroundElement" style={styles.qtyControl}>
-                      <Pressable onPress={() => changeQty(l.menuItemId, -1)} style={styles.qtyButton}>
-                        <ThemedText style={styles.qtyButtonText}>−</ThemedText>
+                    {noteOpen ? (
+                      <TextInput
+                        value={l.notes}
+                        onChangeText={(v) => changeNotes(l.menuItemId, v)}
+                        placeholder="Note for this item (size, allergy, extra request…)"
+                        placeholderTextColor={theme.textSecondary}
+                        style={[styles.noteInput, { color: theme.text, backgroundColor: theme.background }]}
+                      />
+                    ) : (
+                      <Pressable onPress={() => toggleNotes(l.menuItemId)} style={styles.addNoteButton}>
+                        <ThemedText themeColor="textSecondary" type="small">
+                          + Add note
+                        </ThemedText>
                       </Pressable>
-                      <ThemedText style={styles.qtyValue}>{l.quantity}</ThemedText>
-                      <Pressable onPress={() => changeQty(l.menuItemId, 1)} style={styles.qtyButton}>
-                        <ThemedText style={styles.qtyButtonText}>+</ThemedText>
-                      </Pressable>
-                      <Pressable onPress={() => removeLine(l.menuItemId)}>
-                        <ThemedText style={styles.removeText}>✕</ThemedText>
-                      </Pressable>
-                    </ThemedView>
+                    )}
                   </ThemedView>
-                  <TextInput
-                    value={l.notes}
-                    onChangeText={(v) => changeNotes(l.menuItemId, v)}
-                    placeholder="Note for this item (size, allergy, extra request…)"
-                    placeholderTextColor={theme.textSecondary}
-                    style={[styles.noteInput, { color: theme.text, backgroundColor: theme.background }]}
-                  />
-                </ThemedView>
-              ))}
+                );
+              })}
             </ScrollView>
 
             <ThemedView type="backgroundElement" style={styles.totalRow}>
@@ -400,13 +421,14 @@ export default function EditOrderScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1, padding: Spacing.three, gap: Spacing.two },
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, padding: Spacing.three },
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
   rowName: { flex: 1 },
   itemBlock: { borderRadius: Spacing.three, overflow: 'hidden' },
   totalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
   priceEditRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, marginTop: 2 },
   priceInput: { borderRadius: Spacing.one, paddingHorizontal: Spacing.two, paddingVertical: 4, fontSize: 13, minWidth: 70 },
   noteInput: { marginHorizontal: Spacing.three, marginBottom: Spacing.two, borderRadius: Spacing.one, paddingHorizontal: Spacing.two, paddingVertical: Spacing.one, fontSize: 13 },
+  addNoteButton: { marginHorizontal: Spacing.three, marginBottom: Spacing.two },
   qtyControl: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   qtyButton: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(128,128,128,0.2)', alignItems: 'center', justifyContent: 'center' },
   qtyButtonText: { fontSize: 18, lineHeight: 20 },
@@ -414,9 +436,9 @@ const styles = StyleSheet.create({
   removeText: { color: '#dc2626', marginLeft: Spacing.two },
   sectionGap: { marginTop: Spacing.two },
   input: { borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, fontSize: 15 },
-  itemsScroll: { maxHeight: 260, flexGrow: 0 },
-  itemsScrollContent: { gap: Spacing.two },
-  menuList: { flex: 1, minHeight: 120 },
+  itemsScroll: { maxHeight: 200, flexGrow: 0 },
+  itemsScrollContent: { gap: Spacing.one },
+  menuList: { flex: 1, minHeight: 180 },
   menuListContent: { gap: Spacing.two },
   addButton: { backgroundColor: '#ea580c', borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one },
   addButtonText: { color: '#fff', fontWeight: '600' },

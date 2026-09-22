@@ -17,19 +17,20 @@ import { receiptFromServerOrder, ticketFromOutboxEntry, ticketFromServerOrder, u
 import { createBill, type Bill } from '@/api/bills';
 import { ApiError } from '@/api/client';
 import { useSessionStore } from '@/state/session-store';
+import { useT, type TKey } from '@/lib/i18n';
 
-const PAYMENT_METHODS: { value: Bill['paymentMethod']; label: string }[] = [
-  { value: 'CASH', label: 'Cash' },
-  { value: 'QR', label: 'QR Pay' },
-  { value: 'STAFF_FOOD', label: 'Staff Food' },
+const PAYMENT_METHODS: { value: Bill['paymentMethod']; labelKey: TKey }[] = [
+  { value: 'CASH', labelKey: 'myOrders.paymentCash' },
+  { value: 'QR', labelKey: 'myOrders.paymentQr' },
+  { value: 'STAFF_FOOD', labelKey: 'myOrders.paymentStaffFood' },
 ];
 
-const STATUS_LABEL: Record<OrderSummary['status'], string> = {
-  PENDING: 'Pending',
-  PREPARING: 'Preparing',
-  READY: 'Ready',
-  SERVED: 'Served',
-  CANCELLED: 'Cancelled',
+const STATUS_KEY: Record<OrderSummary['status'], TKey> = {
+  PENDING: 'myOrders.statusPending',
+  PREPARING: 'myOrders.statusPreparing',
+  READY: 'myOrders.statusReady',
+  SERVED: 'myOrders.statusServed',
+  CANCELLED: 'myOrders.statusCancelled',
 };
 
 const STATUS_COLOR: Record<OrderSummary['status'], string> = {
@@ -43,6 +44,7 @@ const STATUS_COLOR: Record<OrderSummary['status'], string> = {
 type Row = { kind: 'local'; entry: OutboxEntry } | { kind: 'server'; order: OrderSummary };
 
 export default function MyOrdersScreen() {
+  const t = useT();
   const queryClient = useQueryClient();
   const router = useRouter();
   const kitchen = useKitchenPrinter();
@@ -87,11 +89,11 @@ export default function MyOrdersScreen() {
       }
     } catch (e) {
       if (e instanceof ApiError && e.status === 403) {
-        Alert.alert('Not allowed', "You don't have permission to complete orders. Ask a manager to do it, or to grant you access in Permissions.");
+        Alert.alert(t('myOrders.notAllowedTitle'), t('myOrders.notAllowedMessage'));
       } else if (e instanceof ApiError && e.status === 400) {
-        Alert.alert("Can't complete order", e.message);
+        Alert.alert(t('myOrders.cantCompleteTitle'), e.message);
       } else {
-        Alert.alert('Something went wrong', e instanceof ApiError ? e.message : 'Please check your connection and try again.');
+        Alert.alert(t('myOrders.somethingWentWrongTitle'), e instanceof ApiError ? e.message : t('myOrders.checkConnection'));
       }
     } finally {
       setCompleting(false);
@@ -102,18 +104,18 @@ export default function MyOrdersScreen() {
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
         <ThemedText type="subtitle" style={styles.title}>
-          My Orders
+          {t('myOrders.title')}
         </ThemedText>
 
         {query.isLoading && rows.length === 0 && <ActivityIndicator style={styles.loading} />}
-        {query.isError && <ThemedText themeColor="textSecondary">Can&apos;t reach the server right now — showing what&apos;s saved. Pull down to retry.</ThemedText>}
+        {query.isError && <ThemedText themeColor="textSecondary">{t('myOrders.offlineError')}</ThemedText>}
 
         <FlatList
           data={rows}
           keyExtractor={(r) => (r.kind === 'local' ? `local-${r.entry.clientRef}` : r.order.id)}
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={query.isFetching} onRefresh={refresh} />}
-          ListEmptyComponent={!query.isLoading ? <ThemedText themeColor="textSecondary">No orders yet — start one from the New Order tab.</ThemedText> : null}
+          ListEmptyComponent={!query.isLoading ? <ThemedText themeColor="textSecondary">{t('myOrders.emptyList')}</ThemedText> : null}
           renderItem={({ item: row }) => {
             if (row.kind === 'local') {
               const { entry } = row;
@@ -124,7 +126,7 @@ export default function MyOrdersScreen() {
                   <ThemedView type="backgroundElement" style={styles.cardHeader}>
                     <ThemedText type="smallBold">{entry.display.label}</ThemedText>
                     <ThemedView style={[styles.statusPill, { backgroundColor: failed ? '#dc2626' : '#f97316' }]}>
-                      <ThemedText style={styles.statusText}>{failed ? 'Not sent' : entry.status === 'syncing' ? 'Sending…' : 'Waiting to send'}</ThemedText>
+                      <ThemedText style={styles.statusText}>{failed ? t('myOrders.notSent') : entry.status === 'syncing' ? t('myOrders.sending') : t('myOrders.waitingToSend')}</ThemedText>
                     </ThemedView>
                   </ThemedView>
                   {entry.display.lines.map((line, i) => (
@@ -134,24 +136,24 @@ export default function MyOrdersScreen() {
                   ))}
                   {entry.display.waiter ? (
                     <ThemedText themeColor="textSecondary" type="small">
-                      Taken by {entry.display.waiter}
+                      {t('myOrders.takenBy', { name: entry.display.waiter })}
                     </ThemedText>
                   ) : null}
                   {entry.display.lines.every((l) => l.price !== undefined) && (
-                    <ThemedText type="smallBold">Total: {fmt(entry.display.lines.reduce((sum, l) => sum + (l.price ?? 0) * l.quantity, 0))}</ThemedText>
+                    <ThemedText type="smallBold">{t('myOrders.totalAmount', { amount: fmt(entry.display.lines.reduce((sum, l) => sum + (l.price ?? 0) * l.quantity, 0)) })}</ThemedText>
                   )}
                   {failed ? (
                     <ThemedText style={styles.failedText} type="small">
-                      The server refused this order: {entry.lastError}. Please tell a manager.
+                      {t('myOrders.failedText', { error: entry.lastError ?? '' })}
                     </ThemedText>
                   ) : (
                     <ThemedText themeColor="textSecondary" type="small">
-                      Saved on this phone. It will send automatically when there&apos;s a connection. Tap to edit.
+                      {t('myOrders.savedOnPhone')}
                     </ThemedText>
                   )}
                   {kitchen.enabled && !failed && (
                     <Pressable onPress={() => void kitchen.print(ticketFromOutboxEntry(entry))} disabled={kitchen.printing} style={styles.printButton}>
-                      <ThemedText style={styles.printText}>{kitchen.printing ? 'Printing…' : 'Print ticket'}</ThemedText>
+                      <ThemedText style={styles.printText}>{kitchen.printing ? t('myOrders.printing') : t('myOrders.printTicket')}</ThemedText>
                     </Pressable>
                   )}
                 </ThemedView>
@@ -168,7 +170,7 @@ export default function MyOrdersScreen() {
                     #{order.orderNumber} — {order.type === 'DINE_IN' ? (order.table ? tableName(order.table) : 'Table') : (order.customerName ?? 'Takeaway')}
                   </ThemedText>
                   <ThemedView style={[styles.statusPill, { backgroundColor: STATUS_COLOR[order.status] }]}>
-                    <ThemedText style={styles.statusText}>{STATUS_LABEL[order.status]}</ThemedText>
+                    <ThemedText style={styles.statusText}>{t(STATUS_KEY[order.status])}</ThemedText>
                   </ThemedView>
                 </ThemedView>
                 {order.items.map((line) => (
@@ -178,23 +180,23 @@ export default function MyOrdersScreen() {
                 ))}
                 {order.waiter && (
                   <ThemedText themeColor="textSecondary" type="small">
-                    Taken by {order.waiter.name}
+                    {t('myOrders.takenBy', { name: order.waiter.name })}
                   </ThemedText>
                 )}
-                <ThemedText type="smallBold">Total: {fmt(order.items.reduce((sum, l) => sum + Number(l.unitPrice) * l.quantity, 0))}</ThemedText>
+                <ThemedText type="smallBold">{t('myOrders.totalAmount', { amount: fmt(order.items.reduce((sum, l) => sum + Number(l.unitPrice) * l.quantity, 0)) })}</ThemedText>
                 {editable && (
                   <ThemedText themeColor="textSecondary" type="small">
-                    Tap to edit
+                    {t('myOrders.tapToEdit')}
                   </ThemedText>
                 )}
                 {editable && (
                   <Pressable onPress={() => setCompletingOrder(order)} style={styles.completeButton}>
-                    <ThemedText style={styles.completeText}>Complete order</ThemedText>
+                    <ThemedText style={styles.completeText}>{t('myOrders.completeOrder')}</ThemedText>
                   </Pressable>
                 )}
                 {kitchen.enabled && (
                   <Pressable onPress={() => void kitchen.print(ticketFromServerOrder(order))} disabled={kitchen.printing} style={styles.printButton}>
-                    <ThemedText style={styles.printText}>{kitchen.printing ? 'Printing…' : 'Print ticket'}</ThemedText>
+                    <ThemedText style={styles.printText}>{kitchen.printing ? t('myOrders.printing') : t('myOrders.printTicket')}</ThemedText>
                   </Pressable>
                 )}
                 {kitchen.canPrintReceipts && order.bill && (
@@ -206,7 +208,7 @@ export default function MyOrdersScreen() {
                     disabled={kitchen.printing}
                     style={styles.printButton}
                   >
-                    <ThemedText style={styles.printText}>{kitchen.printing ? 'Printing…' : 'Reprint receipt'}</ThemedText>
+                    <ThemedText style={styles.printText}>{kitchen.printing ? t('myOrders.printing') : t('myOrders.reprintReceipt')}</ThemedText>
                   </Pressable>
                 )}
               </ThemedView>
@@ -220,10 +222,10 @@ export default function MyOrdersScreen() {
         <ThemedView style={styles.modalBackdrop}>
           <ThemedView type="backgroundElement" style={styles.modalCard}>
             <ThemedText type="smallBold" style={styles.modalTitle}>
-              Complete order {completingOrder ? `#${completingOrder.orderNumber}` : ''}
+              {t('myOrders.completeOrderTitle', { num: completingOrder ? `#${completingOrder.orderNumber}` : '' })}
             </ThemedText>
             <ThemedText themeColor="textSecondary" style={styles.modalSubtitle}>
-              How was this paid?
+              {t('myOrders.howWasThisPaid')}
             </ThemedText>
             {completing ? (
               <ActivityIndicator style={styles.modalLoading} />
@@ -231,11 +233,11 @@ export default function MyOrdersScreen() {
               <>
                 {PAYMENT_METHODS.map((m) => (
                   <Pressable key={m.value} onPress={() => completingOrder && void completeOrder(completingOrder, m.value)} style={styles.paymentOption}>
-                    <ThemedText style={styles.paymentOptionText}>{m.label}</ThemedText>
+                    <ThemedText style={styles.paymentOptionText}>{t(m.labelKey)}</ThemedText>
                   </Pressable>
                 ))}
                 <Pressable onPress={() => setCompletingOrder(null)} style={styles.modalCancel}>
-                  <ThemedText themeColor="textSecondary">Cancel</ThemedText>
+                  <ThemedText themeColor="textSecondary">{t('common.cancel')}</ThemedText>
                 </Pressable>
               </>
             )}

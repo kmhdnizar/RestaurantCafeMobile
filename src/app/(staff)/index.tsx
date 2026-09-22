@@ -16,9 +16,11 @@ import { useSessionStore } from '@/state/session-store';
 import { useKitchenPrinter } from '@/print/use-kitchen-printer';
 import { groupByCategory } from '@/print/escpos';
 import { localOrderKey, setPrintSnapshot } from '@/offline/print-snapshot';
+import { useT } from '@/lib/i18n';
 
 export default function NewOrderScreen() {
   const theme = useTheme();
+  const t = useT();
   const userId = useSessionStore((s) => s.user?.id ?? null);
   const userName = useSessionStore((s) => s.user?.name ?? null);
 
@@ -58,15 +60,15 @@ export default function NewOrderScreen() {
   async function handleSubmit() {
     setError(null);
     if (cart.lines.length === 0) {
-      setError('Add at least one item.');
+      setError(t('newOrder.errorAddAtLeastOne'));
       return;
     }
     if (cart.orderType === 'DINE_IN' && !cart.tableId) {
-      setError('Select a table.');
+      setError(t('newOrder.errorSelectTable'));
       return;
     }
     if (cart.orderType === 'TAKEAWAY' && !cart.customerName.trim()) {
-      setError('Enter a customer name.');
+      setError(t('newOrder.errorEnterCustomerName'));
       return;
     }
     if (!userId) return;
@@ -102,7 +104,7 @@ export default function NewOrderScreen() {
         }
       );
     } catch {
-      setError('Could not save the order on this phone. Please try again.');
+      setError(t('newOrder.errorCouldNotSave'));
       setSubmitting(false);
       return;
     }
@@ -139,14 +141,14 @@ export default function NewOrderScreen() {
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
         <ThemedText type="subtitle" style={styles.title}>
-          New Order
+          {t('newOrder.title')}
         </ThemedText>
 
         {/* Order type */}
         <ThemedView style={styles.segmented}>
-          {(['DINE_IN', 'TAKEAWAY'] as const).map((t) => (
-            <Pressable key={t} onPress={() => cart.setOrderType(t)} style={[styles.segment, cart.orderType === t && styles.segmentActive]}>
-              <ThemedText style={cart.orderType === t ? styles.segmentTextActive : undefined}>{t === 'DINE_IN' ? 'Dine-in' : 'Takeaway'}</ThemedText>
+          {(['DINE_IN', 'TAKEAWAY'] as const).map((orderType) => (
+            <Pressable key={orderType} onPress={() => cart.setOrderType(orderType)} style={[styles.segment, cart.orderType === orderType && styles.segmentActive]}>
+              <ThemedText style={cart.orderType === orderType ? styles.segmentTextActive : undefined}>{orderType === 'DINE_IN' ? t('common.dineIn') : t('common.takeaway')}</ThemedText>
             </Pressable>
           ))}
         </ThemedView>
@@ -163,7 +165,7 @@ export default function NewOrderScreen() {
           <TextInput
             value={cart.customerName}
             onChangeText={cart.setCustomerName}
-            placeholder="Customer name"
+            placeholder={t('newOrder.customerNamePlaceholder')}
             placeholderTextColor={theme.textSecondary}
             style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
           />
@@ -178,7 +180,7 @@ export default function NewOrderScreen() {
         {cart.lines.length > 0 && (
           <>
             <ThemedText type="smallBold">
-              Items in this order ({cart.lines.reduce((n, l) => n + l.quantity, 0)})
+              {t('newOrder.itemsInOrder', { count: cart.lines.reduce((n, l) => n + l.quantity, 0) })}
             </ThemedText>
             {/* Capped and independently scrollable — otherwise a long order
                 pushes the "Add items" search and results off screen. */}
@@ -196,7 +198,7 @@ export default function NewOrderScreen() {
                               value={line.priceText}
                               onChangeText={(v) => cart.setLinePrice(line.menuItemId, v)}
                               keyboardType="decimal-pad"
-                              placeholder="Market price"
+                              placeholder={t('common.marketPricePlaceholder')}
                               placeholderTextColor={theme.textSecondary}
                               style={[styles.priceInput, { color: theme.text, backgroundColor: theme.background }]}
                             />
@@ -227,14 +229,14 @@ export default function NewOrderScreen() {
                       <TextInput
                         value={line.notes}
                         onChangeText={(v) => cart.setLineNotes(line.menuItemId, v)}
-                        placeholder="Note for this item (size, allergy, extra request…)"
+                        placeholder={t('common.notePlaceholder')}
                         placeholderTextColor={theme.textSecondary}
                         style={[styles.noteInput, { color: theme.text, backgroundColor: theme.background }]}
                       />
                     ) : (
                       <Pressable onPress={() => toggleNotes(line.menuItemId)} style={styles.addNoteButton}>
                         <ThemedText themeColor="textSecondary" type="small">
-                          + Add note
+                          {t('common.addNote')}
                         </ThemedText>
                       </Pressable>
                     )}
@@ -246,32 +248,32 @@ export default function NewOrderScreen() {
             <TextInput
               value={cart.notes}
               onChangeText={cart.setNotes}
-              placeholder="Order notes (optional)"
+              placeholder={t('newOrder.orderNotesPlaceholder')}
               placeholderTextColor={theme.textSecondary}
               style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
             />
 
             <ThemedView type="backgroundElement" style={styles.totalRow}>
-              <ThemedText type="smallBold">Total</ThemedText>
+              <ThemedText type="smallBold">{t('common.total')}</ThemedText>
               <ThemedText type="smallBold">{fmt(cartTotal(cart.lines))}</ThemedText>
             </ThemedView>
           </>
         )}
 
         <ThemedText type="smallBold" style={styles.sectionGap}>
-          Add items
+          {t('newOrder.addItemsSection')}
         </ThemedText>
         <TextInput
           value={search}
           onChangeText={setSearch}
-          placeholder="Search menu…"
+          placeholder={t('common.searchMenuPlaceholder')}
           placeholderTextColor={theme.textSecondary}
           style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
         />
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow} contentContainerStyle={styles.chipRowContent}>
           <Pressable onPress={() => setActiveCategory(null)} style={[styles.chip, activeCategory === null && styles.chipActive]}>
-            <ThemedText style={activeCategory === null ? styles.chipTextActive : undefined}>All</ThemedText>
+            <ThemedText style={activeCategory === null ? styles.chipTextActive : undefined}>{t('common.all')}</ThemedText>
           </Pressable>
           {categories.map((c) => (
             <Pressable key={c.id} onPress={() => setActiveCategory(c.id)} style={[styles.chip, activeCategory === c.id && styles.chipActive]}>
@@ -295,7 +297,7 @@ export default function NewOrderScreen() {
                 <ThemedView type="backgroundElement" style={styles.menuRowInfo}>
                   <ThemedText type="smallBold">{item.name}</ThemedText>
                   <ThemedText themeColor="textSecondary" type="small">
-                    {Number(item.price) === 0 ? 'Market price' : fmt(Number(item.price))}
+                    {Number(item.price) === 0 ? t('common.marketPricePlaceholder') : fmt(Number(item.price))}
                   </ThemedText>
                 </ThemedView>
                 {line ? (
@@ -310,17 +312,17 @@ export default function NewOrderScreen() {
                   </ThemedView>
                 ) : (
                   <Pressable onPress={() => cart.addItem(item)} style={styles.addButton}>
-                    <ThemedText style={styles.addButtonText}>Add</ThemedText>
+                    <ThemedText style={styles.addButtonText}>{t('common.add')}</ThemedText>
                   </Pressable>
                 )}
               </ThemedView>
             );
           }}
-          ListEmptyComponent={!loading ? <ThemedText themeColor="textSecondary">No items match right now.</ThemedText> : null}
+          ListEmptyComponent={!loading ? <ThemedText themeColor="textSecondary">{t('newOrder.noItemsMatch')}</ThemedText> : null}
         />
 
         <Pressable onPress={handleSubmit} disabled={submitting || cart.lines.length === 0} style={[styles.submitButton, (submitting || cart.lines.length === 0) && styles.submitButtonDisabled]}>
-          {submitting ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.submitButtonText}>Place Order</ThemedText>}
+          {submitting ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.submitButtonText}>{t('newOrder.placeOrder')}</ThemedText>}
         </Pressable>
       </SafeAreaView>
     </ThemedView>

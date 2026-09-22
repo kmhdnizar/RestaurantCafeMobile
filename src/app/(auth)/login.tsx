@@ -8,9 +8,11 @@ import { useTheme } from '@/hooks/use-theme';
 import { Spacing } from '@/constants/theme';
 import { useSessionStore } from '@/state/session-store';
 import { ApiError } from '@/api/client';
+import { useT } from '@/lib/i18n';
 
 export default function LoginScreen() {
   const theme = useTheme();
+  const t = useT();
   const login = useSessionStore((s) => s.login);
 
   const [username, setUsername] = useState('');
@@ -20,7 +22,7 @@ export default function LoginScreen() {
 
   async function handleSubmit() {
     if (!username.trim() || !password) {
-      setError('Enter your username and password.');
+      setError(t('auth.missingCredentials'));
       return;
     }
     setSubmitting(true);
@@ -28,7 +30,7 @@ export default function LoginScreen() {
     try {
       await login(username.trim(), password);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Something went wrong. Check your connection and try again.');
+      setError(e instanceof ApiError ? e.message : t('auth.genericError'));
     } finally {
       setSubmitting(false);
     }
@@ -39,10 +41,10 @@ export default function LoginScreen() {
       <SafeAreaView style={styles.safeArea}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.form}>
           <ThemedText type="title" style={styles.title}>
-            RestaurantCafe
+            {t('auth.title')}
           </ThemedText>
           <ThemedText type="subtitle" themeColor="textSecondary" style={styles.subtitle}>
-            Staff sign in
+            {t('auth.subtitle')}
           </ThemedText>
 
           {error && (
@@ -56,7 +58,7 @@ export default function LoginScreen() {
           <TextInput
             value={username}
             onChangeText={setUsername}
-            placeholder="Username"
+            placeholder={t('auth.usernamePlaceholder')}
             placeholderTextColor={theme.textSecondary}
             autoCapitalize="none"
             autoCorrect={false}
@@ -66,7 +68,7 @@ export default function LoginScreen() {
           <TextInput
             value={password}
             onChangeText={setPassword}
-            placeholder="Password"
+            placeholder={t('auth.passwordPlaceholder')}
             placeholderTextColor={theme.textSecondary}
             secureTextEntry
             editable={!submitting}
@@ -74,7 +76,7 @@ export default function LoginScreen() {
           />
 
           <Pressable onPress={handleSubmit} disabled={submitting} style={[styles.button, submitting && styles.buttonDisabled]}>
-            {submitting ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.buttonText}>Sign in</ThemedText>}
+            {submitting ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.buttonText}>{t('auth.signIn')}</ThemedText>}
           </Pressable>
         </KeyboardAvoidingView>
       </SafeAreaView>

@@ -19,6 +19,12 @@ import { tableName, sanitizePriceText } from '@/lib/format';
 import { useKitchenPrinter } from '@/print/use-kitchen-printer';
 import { groupByCategory } from '@/print/escpos';
 import { diffAgainstSnapshot, getPrintSnapshot, localOrderKey, serverOrderKey, setPrintSnapshot, type SnapshotLine } from '@/offline/print-snapshot';
+import { useT, type TKey } from '@/lib/i18n';
+
+const STATUS_KEY: Partial<Record<'SERVED' | 'CANCELLED', TKey>> = {
+  SERVED: 'myOrders.statusServed',
+  CANCELLED: 'myOrders.statusCancelled',
+};
 
 interface Line {
   menuItemId: string;
@@ -44,6 +50,7 @@ export default function EditOrderScreen() {
   const { kind, ref } = useLocalSearchParams<{ kind: 'local' | 'server'; ref: string }>();
   const router = useRouter();
   const theme = useTheme();
+  const t = useT();
   const queryClient = useQueryClient();
   const userId = useSessionStore((s) => s.user?.id ?? null);
   const userName = useSessionStore((s) => s.user?.name ?? null);
@@ -124,10 +131,10 @@ export default function EditOrderScreen() {
   const notEditableReason =
     kind === 'local' && localEntry && localEntry.status !== 'pending'
       ? localEntry.status === 'failed'
-        ? 'The server refused this order, so it can no longer be edited. Please tell a manager.'
-        : 'This order is being sent right now. Go back and try again in a moment.'
+        ? t('editOrder.notEditableFailed')
+        : t('editOrder.notEditableSending')
       : kind === 'server' && serverOrder && (serverOrder.status === 'SERVED' || serverOrder.status === 'CANCELLED')
-        ? `This order is ${serverOrder.status.toLowerCase()} and can no longer be edited.`
+        ? t('editOrder.notEditableStatus', { status: t(STATUS_KEY[serverOrder.status]!) })
         : null;
 
   function changeQty(menuItemId: string, delta: number) {
@@ -153,7 +160,7 @@ export default function EditOrderScreen() {
     setLines((prev) => {
       if (!prev) return prev;
       if (prev.length <= 1) {
-        setError('An order must keep at least one item.');
+        setError(t('editOrder.mustKeepOneItem'));
         return prev;
       }
       return prev.filter((l) => l.menuItemId !== menuItemId);
@@ -175,7 +182,7 @@ export default function EditOrderScreen() {
 
   async function save() {
     if (!lines || lines.length === 0) {
-      setError('An order must keep at least one item.');
+      setError(t('editOrder.mustKeepOneItem'));
       return;
     }
     setError(null);
@@ -188,14 +195,14 @@ export default function EditOrderScreen() {
           { label: localEntry.display.label, waiter: localEntry.display.waiter, lines: lines.map((l) => ({ name: l.name, quantity: l.quantity, category: l.category, price: l.price })) }
         );
         if (!ok) {
-          setError('This order was just sent, so it can no longer be changed here. Go back and open it again.');
+          setError(t('editOrder.couldNotChange'));
           return;
         }
         await useOutboxStore.getState().refresh(userId);
       } else if (kind === 'server' && serverOrder) {
         const net = await NetInfo.fetch();
         if (!net.isConnected || net.isInternetReachable === false) {
-          setError('You need a connection to change an order that has already been sent.');
+          setError(t('editOrder.needConnection'));
           return;
         }
         const original = new Map(serverOrder.items.map((it) => [it.menuItem.id, it]));
@@ -226,7 +233,7 @@ export default function EditOrderScreen() {
         } catch (e) {
           // Some changes may already have gone through — refresh so the list shows the truth.
           void queryClient.invalidateQueries({ queryKey: ['orders', 'mine'] });
-          setError(`${e instanceof ApiError ? e.message : 'Something went wrong'}. Some changes may not have been saved — check the order in My Orders.`);
+          setError(t('editOrder.someChangesNotSaved', { msg: e instanceof ApiError ? e.message : t('myOrders.somethingWentWrongTitle') }));
           return;
         }
         await queryClient.invalidateQueries({ queryKey: ['orders', 'mine'] });
@@ -265,7 +272,7 @@ export default function EditOrderScreen() {
 
   const search_ = search.trim().toLowerCase();
   const results = menuItems.filter((m) => !search_ || m.name.toLowerCase().includes(search_)).slice(0, 30);
-  const title = localEntry ? localEntry.display.label : serverOrder ? `Order #${serverOrder.orderNumber}` : 'Edit order';
+  const title = localEntry ? localEntry.display.label : serverOrder ? `Order #${serverOrder.orderNumber}` : t('editOrder.defaultTitle');
   const total = lines?.reduce((sum, l) => sum + (l.price ?? 0) * l.quantity, 0) ?? 0;
 
   if (!lines) {
@@ -274,9 +281,9 @@ export default function EditOrderScreen() {
         <SafeAreaView style={styles.safeArea}>
           {localEntry === undefined && serverOrder === undefined && !ordersQuery.isLoading ? (
             <>
-              <ThemedText>This order could not be found — it may have just been sent.</ThemedText>
+              <ThemedText>{t('editOrder.orderNotFound')}</ThemedText>
               <Pressable onPress={() => router.back()} style={styles.secondaryButton}>
-                <ThemedText>Back</ThemedText>
+                <ThemedText>{t('common.back')}</ThemedText>
               </Pressable>
             </>
           ) : (
@@ -296,7 +303,7 @@ export default function EditOrderScreen() {
           <>
             <ThemedText themeColor="textSecondary">{notEditableReason}</ThemedText>
             <Pressable onPress={() => router.back()} style={styles.secondaryButton}>
-              <ThemedText>Back</ThemedText>
+              <ThemedText>{t('common.back')}</ThemedText>
             </Pressable>
           </>
         ) : (
@@ -308,7 +315,7 @@ export default function EditOrderScreen() {
             )}
 
             <ThemedText type="smallBold">
-              Items on this order ({lines.length})
+              {t('editOrder.itemsOnOrder', { count: lines.length })}
             </ThemedText>
             {/* Capped and independently scrollable — otherwise a long order
                 pushes the "Add items" search and results off screen. */}
@@ -326,7 +333,7 @@ export default function EditOrderScreen() {
                               value={l.priceText ?? ''}
                               onChangeText={(v) => changePrice(l.menuItemId, v)}
                               keyboardType="decimal-pad"
-                              placeholder="Market price"
+                              placeholder={t('common.marketPricePlaceholder')}
                               placeholderTextColor={theme.textSecondary}
                               style={[styles.priceInput, { color: theme.text, backgroundColor: theme.background }]}
                             />
@@ -353,14 +360,14 @@ export default function EditOrderScreen() {
                       <TextInput
                         value={l.notes}
                         onChangeText={(v) => changeNotes(l.menuItemId, v)}
-                        placeholder="Note for this item (size, allergy, extra request…)"
+                        placeholder={t('common.notePlaceholder')}
                         placeholderTextColor={theme.textSecondary}
                         style={[styles.noteInput, { color: theme.text, backgroundColor: theme.background }]}
                       />
                     ) : (
                       <Pressable onPress={() => toggleNotes(l.menuItemId)} style={styles.addNoteButton}>
                         <ThemedText themeColor="textSecondary" type="small">
-                          + Add note
+                          {t('common.addNote')}
                         </ThemedText>
                       </Pressable>
                     )}
@@ -370,17 +377,17 @@ export default function EditOrderScreen() {
             </ScrollView>
 
             <ThemedView type="backgroundElement" style={styles.totalRow}>
-              <ThemedText type="smallBold">Total</ThemedText>
+              <ThemedText type="smallBold">{t('common.total')}</ThemedText>
               <ThemedText type="smallBold">{fmt(total)}</ThemedText>
             </ThemedView>
 
             <ThemedText type="smallBold" style={styles.sectionGap}>
-              Add items
+              {t('newOrder.addItemsSection')}
             </ThemedText>
             <TextInput
               value={search}
               onChangeText={setSearch}
-              placeholder="Search menu…"
+              placeholder={t('common.searchMenuPlaceholder')}
               placeholderTextColor={theme.textSecondary}
               style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
             />
@@ -395,21 +402,21 @@ export default function EditOrderScreen() {
                   <ThemedView type="backgroundElement" style={styles.rowName}>
                     <ThemedText type="smallBold">{item.name}</ThemedText>
                     <ThemedText themeColor="textSecondary" type="small">
-                      {Number(item.price) === 0 ? 'Market price' : fmt(Number(item.price))}
+                      {Number(item.price) === 0 ? t('common.marketPricePlaceholder') : fmt(Number(item.price))}
                     </ThemedText>
                   </ThemedView>
                   <Pressable onPress={() => addLine(item)} style={styles.addButton}>
-                    <ThemedText style={styles.addButtonText}>Add</ThemedText>
+                    <ThemedText style={styles.addButtonText}>{t('common.add')}</ThemedText>
                   </Pressable>
                 </ThemedView>
               )}
             />
 
             <Pressable onPress={save} disabled={saving} style={[styles.saveButton, saving && styles.disabled]}>
-              {saving ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.saveText}>Save changes</ThemedText>}
+              {saving ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.saveText}>{t('editOrder.saveChanges')}</ThemedText>}
             </Pressable>
             <Pressable onPress={() => router.back()} style={styles.secondaryButton}>
-              <ThemedText themeColor="textSecondary">Cancel</ThemedText>
+              <ThemedText themeColor="textSecondary">{t('common.cancel')}</ThemedText>
             </Pressable>
           </>
         )}

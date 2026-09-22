@@ -5,6 +5,7 @@ import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client
 
 import { ThemedView } from '@/components/themed-view';
 import { useSessionStore, forceLogout } from '@/state/session-store';
+import { useLocaleStore } from '@/state/locale-store';
 import { setUnauthorizedHandler } from '@/api/client';
 import { queryClient, queryPersister, PERSIST_MAX_AGE } from '@/lib/query-client';
 
@@ -17,10 +18,12 @@ export default function RootLayout() {
   const colorScheme = useColorScheme();
   const status = useSessionStore((s) => s.status);
   const hydrate = useSessionStore((s) => s.hydrate);
+  const hydrateLocale = useLocaleStore((s) => s.hydrate);
 
   useEffect(() => {
     void hydrate();
-  }, [hydrate]);
+    void hydrateLocale();
+  }, [hydrate, hydrateLocale]);
 
   return (
     <PersistQueryClientProvider client={queryClient} persistOptions={{ persister: queryPersister, maxAge: PERSIST_MAX_AGE }}>

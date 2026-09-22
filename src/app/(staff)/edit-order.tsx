@@ -19,6 +19,12 @@ import { tableName, sanitizePriceText } from '@/lib/format';
 import { useKitchenPrinter } from '@/print/use-kitchen-printer';
 import { groupByCategory } from '@/print/escpos';
 import { diffAgainstSnapshot, getPrintSnapshot, localOrderKey, serverOrderKey, setPrintSnapshot, type SnapshotLine } from '@/offline/print-snapshot';
+import { useT, type TKey } from '@/lib/i18n';
+
+const STATUS_KEY: Partial<Record<'SERVED' | 'CANCELLED', TKey>> = {
+  SERVED: 'myOrders.statusServed',
+  CANCELLED: 'myOrders.statusCancelled',
+};
 
 interface Line {
   menuItemId: string;
@@ -44,6 +50,7 @@ export default function EditOrderScreen() {
   const { kind, ref } = useLocalSearchParams<{ kind: 'local' | 'server'; ref: string }>();
   const router = useRouter();
   const theme = useTheme();
+  const t = useT();
   const queryClient = useQueryClient();
   const userId = useSessionStore((s) => s.user?.id ?? null);
   const userName = useSessionStore((s) => s.user?.name ?? null);
@@ -60,6 +67,16 @@ export default function EditOrderScreen() {
   const [search, setSearch] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Notes start collapsed so a line without one stays a single compact row.
+  const [openNotes, setOpenNotes] = useState<Set<string>>(new Set());
+  function toggleNotes(menuItemId: string) {
+    setOpenNotes((prev) => {
+      const next = new Set(prev);
+      if (next.has(menuItemId)) next.delete(menuItemId);
+      else next.add(menuItemId);
+      return next;
+    });
+  }
 
   // Expo Router can reuse this same screen instance when navigating from one
   // order straight to another, so `lines` must be dropped whenever the order
@@ -114,10 +131,10 @@ export default function EditOrderScreen() {
   const notEditableReason =
     kind === 'local' && localEntry && localEntry.status !== 'pending'
       ? localEntry.status === 'failed'
-        ? 'The server refused this order, so it can no longer be edited. Please tell a manager.'
-        : 'This order is being sent right now. Go back and try again in a moment.'
+        ? t('editOrder.notEditableFailed')
+        : t('editOrder.notEditableSending')
       : kind === 'server' && serverOrder && (serverOrder.status === 'SERVED' || serverOrder.status === 'CANCELLED')
-        ? `This order is ${serverOrder.status.toLowerCase()} and can no longer be edited.`
+        ? t('editOrder.notEditableStatus', { status: t(STATUS_KEY[serverOrder.status]!) })
         : null;
 
   function changeQty(menuItemId: string, delta: number) {
@@ -143,7 +160,7 @@ export default function EditOrderScreen() {
     setLines((prev) => {
       if (!prev) return prev;
       if (prev.length <= 1) {
-        setError('An order must keep at least one item.');
+        setError(t('editOrder.mustKeepOneItem'));
         return prev;
       }
       return prev.filter((l) => l.menuItemId !== menuItemId);
@@ -165,7 +182,7 @@ export default function EditOrderScreen() {
 
   async function save() {
     if (!lines || lines.length === 0) {
-      setError('An order must keep at least one item.');
+      setError(t('editOrder.mustKeepOneItem'));
       return;
     }
     setError(null);
@@ -178,14 +195,14 @@ export default function EditOrderScreen() {
           { label: localEntry.display.label, waiter: localEntry.display.waiter, lines: lines.map((l) => ({ name: l.name, quantity: l.quantity, category: l.category, price: l.price })) }
         );
         if (!ok) {
-          setError('This order was just sent, so it can no longer be changed here. Go back and open it again.');
+          setError(t('editOrder.couldNotChange'));
           return;
         }
         await useOutboxStore.getState().refresh(userId);
       } else if (kind === 'server' && serverOrder) {
         const net = await NetInfo.fetch();
         if (!net.isConnected || net.isInternetReachable === false) {
-          setError('You need a connection to change an order that has already been sent.');
+          setError(t('editOrder.needConnection'));
           return;
         }
         const original = new Map(serverOrder.items.map((it) => [it.menuItem.id, it]));
@@ -216,7 +233,7 @@ export default function EditOrderScreen() {
         } catch (e) {
           // Some changes may already have gone through — refresh so the list shows the truth.
           void queryClient.invalidateQueries({ queryKey: ['orders', 'mine'] });
-          setError(`${e instanceof ApiError ? e.message : 'Something went wrong'}. Some changes may not have been saved — check the order in My Orders.`);
+          setError(t('editOrder.someChangesNotSaved', { msg: e instanceof ApiError ? e.message : t('myOrders.somethingWentWrongTitle') }));
           return;
         }
         await queryClient.invalidateQueries({ queryKey: ['orders', 'mine'] });
@@ -255,7 +272,7 @@ export default function EditOrderScreen() {
 
   const search_ = search.trim().toLowerCase();
   const results = menuItems.filter((m) => !search_ || m.name.toLowerCase().includes(search_)).slice(0, 30);
-  const title = localEntry ? localEntry.display.label : serverOrder ? `Order #${serverOrder.orderNumber}` : 'Edit order';
+  const title = localEntry ? localEntry.display.label : serverOrder ? `Order #${serverOrder.orderNumber}` : t('editOrder.defaultTitle');
   const total = lines?.reduce((sum, l) => sum + (l.price ?? 0) * l.quantity, 0) ?? 0;
 
   if (!lines) {
@@ -264,9 +281,9 @@ export default function EditOrderScreen() {
         <SafeAreaView style={styles.safeArea}>
           {localEntry === undefined && serverOrder === undefined && !ordersQuery.isLoading ? (
             <>
-              <ThemedText>This order could not be found — it may have just been sent.</ThemedText>
+              <ThemedText>{t('editOrder.orderNotFound')}</ThemedText>
               <Pressable onPress={() => router.back()} style={styles.secondaryButton}>
-                <ThemedText>Back</ThemedText>
+                <ThemedText>{t('common.back')}</ThemedText>
               </Pressable>
             </>
           ) : (
@@ -286,7 +303,7 @@ export default function EditOrderScreen() {
           <>
             <ThemedText themeColor="textSecondary">{notEditableReason}</ThemedText>
             <Pressable onPress={() => router.back()} style={styles.secondaryButton}>
-              <ThemedText>Back</ThemedText>
+              <ThemedText>{t('common.back')}</ThemedText>
             </Pressable>
           </>
         ) : (
@@ -298,68 +315,79 @@ export default function EditOrderScreen() {
             )}
 
             <ThemedText type="smallBold">
-              Items on this order ({lines.length})
+              {t('editOrder.itemsOnOrder', { count: lines.length })}
             </ThemedText>
             {/* Capped and independently scrollable — otherwise a long order
                 pushes the "Add items" search and results off screen. */}
             <ScrollView style={styles.itemsScroll} nestedScrollEnabled contentContainerStyle={styles.itemsScrollContent}>
-              {lines.map((l) => (
-                <ThemedView key={l.menuItemId} type="backgroundElement" style={styles.itemBlock}>
-                  <ThemedView type="backgroundElement" style={styles.row}>
-                    <ThemedView type="backgroundElement" style={styles.rowName}>
-                      <ThemedText>{l.name}</ThemedText>
-                      {l.variablePrice && (
-                        <ThemedView type="backgroundElement" style={styles.priceEditRow}>
-                          <ThemedText themeColor="textSecondary" type="small">
-                            Market price:
-                          </ThemedText>
-                          <TextInput
-                            value={l.priceText ?? ''}
-                            onChangeText={(v) => changePrice(l.menuItemId, v)}
-                            keyboardType="decimal-pad"
-                            placeholder="0.00"
-                            placeholderTextColor={theme.textSecondary}
-                            style={[styles.priceInput, { color: theme.text, backgroundColor: theme.background }]}
-                          />
-                        </ThemedView>
-                      )}
+              {lines.map((l) => {
+                const noteOpen = openNotes.has(l.menuItemId) || !!l.notes;
+                return (
+                  <ThemedView key={l.menuItemId} type="backgroundElement" style={styles.itemBlock}>
+                    <ThemedView type="backgroundElement" style={styles.row}>
+                      <ThemedView type="backgroundElement" style={styles.rowName}>
+                        <ThemedText>{l.name}</ThemedText>
+                        {l.variablePrice && (
+                          <ThemedView type="backgroundElement" style={styles.priceEditRow}>
+                            <TextInput
+                              value={l.priceText ?? ''}
+                              onChangeText={(v) => changePrice(l.menuItemId, v)}
+                              keyboardType="decimal-pad"
+                              placeholder={t('common.marketPricePlaceholder')}
+                              placeholderTextColor={theme.textSecondary}
+                              style={[styles.priceInput, { color: theme.text, backgroundColor: theme.background }]}
+                            />
+                            <ThemedText themeColor="textSecondary" type="small">
+                              = {fmt((l.price ?? 0) * l.quantity)}
+                            </ThemedText>
+                          </ThemedView>
+                        )}
+                      </ThemedView>
+                      <ThemedView type="backgroundElement" style={styles.qtyControl}>
+                        <Pressable onPress={() => changeQty(l.menuItemId, -1)} style={styles.qtyButton}>
+                          <ThemedText style={styles.qtyButtonText}>−</ThemedText>
+                        </Pressable>
+                        <ThemedText style={styles.qtyValue}>{l.quantity}</ThemedText>
+                        <Pressable onPress={() => changeQty(l.menuItemId, 1)} style={styles.qtyButton}>
+                          <ThemedText style={styles.qtyButtonText}>+</ThemedText>
+                        </Pressable>
+                        <Pressable onPress={() => removeLine(l.menuItemId)}>
+                          <ThemedText style={styles.removeText}>✕</ThemedText>
+                        </Pressable>
+                      </ThemedView>
                     </ThemedView>
-                    <ThemedView type="backgroundElement" style={styles.qtyControl}>
-                      <Pressable onPress={() => changeQty(l.menuItemId, -1)} style={styles.qtyButton}>
-                        <ThemedText style={styles.qtyButtonText}>−</ThemedText>
+                    {noteOpen ? (
+                      <TextInput
+                        value={l.notes}
+                        onChangeText={(v) => changeNotes(l.menuItemId, v)}
+                        placeholder={t('common.notePlaceholder')}
+                        placeholderTextColor={theme.textSecondary}
+                        style={[styles.noteInput, { color: theme.text, backgroundColor: theme.background }]}
+                      />
+                    ) : (
+                      <Pressable onPress={() => toggleNotes(l.menuItemId)} style={styles.addNoteButton}>
+                        <ThemedText themeColor="textSecondary" type="small">
+                          {t('common.addNote')}
+                        </ThemedText>
                       </Pressable>
-                      <ThemedText style={styles.qtyValue}>{l.quantity}</ThemedText>
-                      <Pressable onPress={() => changeQty(l.menuItemId, 1)} style={styles.qtyButton}>
-                        <ThemedText style={styles.qtyButtonText}>+</ThemedText>
-                      </Pressable>
-                      <Pressable onPress={() => removeLine(l.menuItemId)}>
-                        <ThemedText style={styles.removeText}>✕</ThemedText>
-                      </Pressable>
-                    </ThemedView>
+                    )}
                   </ThemedView>
-                  <TextInput
-                    value={l.notes}
-                    onChangeText={(v) => changeNotes(l.menuItemId, v)}
-                    placeholder="Note for this item (size, allergy, extra request…)"
-                    placeholderTextColor={theme.textSecondary}
-                    style={[styles.noteInput, { color: theme.text, backgroundColor: theme.background }]}
-                  />
-                </ThemedView>
-              ))}
+                );
+              })}
             </ScrollView>
 
             <ThemedView type="backgroundElement" style={styles.totalRow}>
-              <ThemedText type="smallBold">Total</ThemedText>
+              <ThemedText type="smallBold">{t('common.total')}</ThemedText>
               <ThemedText type="smallBold">{fmt(total)}</ThemedText>
             </ThemedView>
 
             <ThemedText type="smallBold" style={styles.sectionGap}>
-              Add items
+              {t('newOrder.addItemsSection')}
             </ThemedText>
             <TextInput
               value={search}
               onChangeText={setSearch}
-              placeholder="Search menu…"
+              placeholder={t('common.searchMenuPlaceholder')}
               placeholderTextColor={theme.textSecondary}
               style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
             />
@@ -374,21 +402,21 @@ export default function EditOrderScreen() {
                   <ThemedView type="backgroundElement" style={styles.rowName}>
                     <ThemedText type="smallBold">{item.name}</ThemedText>
                     <ThemedText themeColor="textSecondary" type="small">
-                      {Number(item.price) === 0 ? 'Market price' : fmt(Number(item.price))}
+                      {Number(item.price) === 0 ? t('common.marketPricePlaceholder') : fmt(Number(item.price))}
                     </ThemedText>
                   </ThemedView>
                   <Pressable onPress={() => addLine(item)} style={styles.addButton}>
-                    <ThemedText style={styles.addButtonText}>Add</ThemedText>
+                    <ThemedText style={styles.addButtonText}>{t('common.add')}</ThemedText>
                   </Pressable>
                 </ThemedView>
               )}
             />
 
             <Pressable onPress={save} disabled={saving} style={[styles.saveButton, saving && styles.disabled]}>
-              {saving ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.saveText}>Save changes</ThemedText>}
+              {saving ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.saveText}>{t('editOrder.saveChanges')}</ThemedText>}
             </Pressable>
             <Pressable onPress={() => router.back()} style={styles.secondaryButton}>
-              <ThemedText themeColor="textSecondary">Cancel</ThemedText>
+              <ThemedText themeColor="textSecondary">{t('common.cancel')}</ThemedText>
             </Pressable>
           </>
         )}
@@ -400,13 +428,14 @@ export default function EditOrderScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1, padding: Spacing.three, gap: Spacing.two },
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, padding: Spacing.three },
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
   rowName: { flex: 1 },
   itemBlock: { borderRadius: Spacing.three, overflow: 'hidden' },
   totalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
   priceEditRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, marginTop: 2 },
   priceInput: { borderRadius: Spacing.one, paddingHorizontal: Spacing.two, paddingVertical: 4, fontSize: 13, minWidth: 70 },
   noteInput: { marginHorizontal: Spacing.three, marginBottom: Spacing.two, borderRadius: Spacing.one, paddingHorizontal: Spacing.two, paddingVertical: Spacing.one, fontSize: 13 },
+  addNoteButton: { marginHorizontal: Spacing.three, marginBottom: Spacing.two },
   qtyControl: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   qtyButton: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(128,128,128,0.2)', alignItems: 'center', justifyContent: 'center' },
   qtyButtonText: { fontSize: 18, lineHeight: 20 },
@@ -414,9 +443,9 @@ const styles = StyleSheet.create({
   removeText: { color: '#dc2626', marginLeft: Spacing.two },
   sectionGap: { marginTop: Spacing.two },
   input: { borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, fontSize: 15 },
-  itemsScroll: { maxHeight: 260, flexGrow: 0 },
-  itemsScrollContent: { gap: Spacing.two },
-  menuList: { flex: 1, minHeight: 120 },
+  itemsScroll: { maxHeight: 200, flexGrow: 0 },
+  itemsScrollContent: { gap: Spacing.one },
+  menuList: { flex: 1, minHeight: 180 },
   menuListContent: { gap: Spacing.two },
   addButton: { backgroundColor: '#ea580c', borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one },
   addButtonText: { color: '#fff', fontWeight: '600' },

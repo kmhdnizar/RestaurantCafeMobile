@@ -5,6 +5,7 @@ import { ApiError, UnauthorizedError } from '@/api/client';
 import { createOrder } from '@/api/orders';
 import { queryClient } from '@/lib/query-client';
 import { listPending, markFailed, markPending, markSyncing, removeEntry, resetStuckSyncing } from '@/offline/outbox';
+import { getPrintSnapshot, localOrderKey, serverOrderKey, setPrintSnapshot } from '@/offline/print-snapshot';
 import { useOutboxStore } from '@/state/outbox-store';
 
 let currentUserId: string | null = null;
@@ -28,7 +29,11 @@ export async function flushOutbox(): Promise<void> {
       await store.refresh(userId);
 
       try {
-        await createOrder({ ...next.payload, clientRef: next.clientRef });
+        const order = await createOrder({ ...next.payload, clientRef: next.clientRef });
+        // Carry the "what's been printed" record over to the order's real
+        // server id, so an edit after this point still only prints the change.
+        const snapshot = await getPrintSnapshot(localOrderKey(next.clientRef));
+        if (snapshot.length) await setPrintSnapshot(serverOrderKey(order.id), snapshot);
         await removeEntry(next.clientRef);
         void queryClient.invalidateQueries({ queryKey: ['orders', 'mine'] });
       } catch (e) {

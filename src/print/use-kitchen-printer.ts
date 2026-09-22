@@ -6,6 +6,7 @@ import { fetchConfig } from '@/api/menu';
 import type { OrderSummary } from '@/api/orders';
 import type { OutboxEntry } from '@/offline/outbox';
 import { buildTicketBytes, groupByCategory, type Ticket } from '@/print/escpos';
+import { buildReceiptBytes, type Receipt } from '@/print/receipt';
 import { sendToPrinter } from '@/print/printer-client';
 
 type TicketBody = Omit<Ticket, 'timestamp'>;
@@ -14,6 +15,7 @@ export function ticketFromOutboxEntry(entry: OutboxEntry): TicketBody {
   return {
     orderNumber: null,
     label: entry.display.label,
+    waiter: entry.display.waiter ?? null,
     categories: groupByCategory(
       entry.payload.items.map((it, i) => ({
         qty: it.quantity,
@@ -28,6 +30,7 @@ export function ticketFromOutboxEntry(entry: OutboxEntry): TicketBody {
 export function ticketFromServerOrder(order: OrderSummary): TicketBody {
   return {
     orderNumber: order.orderNumber,
+    waiter: order.waiter?.name ?? null,
     label: order.type === 'DINE_IN' ? (order.table?.name?.trim() || `Table ${order.table?.number ?? '?'}`) : (order.customerName ?? 'Takeaway'),
     categories: groupByCategory(
       order.items.map((it) => ({ qty: it.quantity, name: it.menuItem.name, notes: it.notes, category: it.menuItem.category?.name ?? 'Other' }))
@@ -42,6 +45,10 @@ export function useKitchenPrinter() {
   const config = useQuery({ queryKey: ['config'], queryFn: fetchConfig }).data;
   const address = config?.kitchenPrinterAddress ?? null;
   const enabled = Boolean(config?.printOrdersByCategory && address);
+  // Receipts are gated only on a printer address being configured — not on
+  // the kitchen-ticket-by-category toggle, since billing is a separate
+  // concern from how kitchen tickets are grouped.
+  const canPrintReceipts = Boolean(address);
   const timezone = config?.timezone ?? 'UTC';
   const [printing, setPrinting] = useState(false);
 
@@ -67,5 +74,27 @@ export function useKitchenPrinter() {
     [enabled, address, timezone]
   );
 
-  return { enabled, printing, print };
+  const printReceipt = useCallback(
+    async (body: Omit<Receipt, 'timestamp'>): Promise<boolean> => {
+      if (!canPrintReceipts || !address) return false;
+      setPrinting(true);
+      try {
+        const timestamp = new Date().toLocaleString('en-US', { timeZone: timezone });
+        await sendToPrinter(address, buildReceiptBytes({ ...body, timestamp }));
+        return true;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : 'Unknown printer error.';
+        Alert.alert('Receipt did not print', message, [
+          { text: 'Close', style: 'cancel' },
+          { text: 'Try again', onPress: () => void printReceipt(body) },
+        ]);
+        return false;
+      } finally {
+        setPrinting(false);
+      }
+    },
+    [canPrintReceipts, address, timezone]
+  );
+
+  return { enabled, canPrintReceipts, printing, print, printReceipt };
 }

@@ -15,10 +15,12 @@ import { useOutboxStore } from '@/state/outbox-store';
 import { useSessionStore } from '@/state/session-store';
 import { useKitchenPrinter } from '@/print/use-kitchen-printer';
 import { groupByCategory } from '@/print/escpos';
+import { localOrderKey, setPrintSnapshot } from '@/offline/print-snapshot';
 
 export default function NewOrderScreen() {
   const theme = useTheme();
   const userId = useSessionStore((s) => s.user?.id ?? null);
+  const userName = useSessionStore((s) => s.user?.name ?? null);
 
   const { items: visibleItems, tables: activeTables, fmt, loading } = useOrderableMenu();
 
@@ -62,7 +64,7 @@ export default function NewOrderScreen() {
       // Always saved on the phone first, then sent in the background — one
       // code path whether or not there's a connection right now.
       const table = activeTables.find((t) => t.id === cart.tableId);
-      await enqueueOrder(
+      const clientRef = await enqueueOrder(
         userId,
         {
           type: cart.orderType,
@@ -73,7 +75,8 @@ export default function NewOrderScreen() {
         },
         {
           label: cart.orderType === 'DINE_IN' ? (table ? tableName(table) : 'Table') : cart.customerName.trim(),
-          lines: cart.lines.map((l) => ({ name: l.name, quantity: l.quantity, category: l.category })),
+          waiter: userName ?? undefined,
+          lines: cart.lines.map((l) => ({ name: l.name, quantity: l.quantity, category: l.category, price: l.price })),
         }
       );
       // Built from the cart before it is cleared. Printed straight away from
@@ -81,9 +84,16 @@ export default function NewOrderScreen() {
       // the kitchen gets the ticket even when the internet is down.
       const ticketBody = {
         orderNumber: null,
+        waiter: userName,
         label: cart.orderType === 'DINE_IN' ? (table ? tableName(table) : 'Table') : cart.customerName.trim(),
         categories: groupByCategory(cart.lines.map((l) => ({ qty: l.quantity, name: l.name, notes: l.notes || null, category: l.category }))),
       };
+      // Record what's been sent so a later edit only prints the *change*,
+      // not the whole order again.
+      void setPrintSnapshot(
+        localOrderKey(clientRef),
+        cart.lines.map((l) => ({ menuItemId: l.menuItemId, name: l.name, category: l.category, quantity: l.quantity, notes: l.notes || null }))
+      );
       cart.reset();
       setCartOpen(false);
       await useOutboxStore.getState().refresh(userId);
@@ -153,6 +163,7 @@ export default function NewOrderScreen() {
         {loading && <ActivityIndicator style={styles.loading} />}
 
         <FlatList
+          style={styles.menuFlex}
           data={filteredItems}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.menuList}
@@ -273,12 +284,13 @@ const styles = StyleSheet.create({
   segmentActive: { backgroundColor: '#ea580c' },
   segmentTextActive: { color: '#fff', fontWeight: '600' },
   input: { borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, fontSize: 15 },
-  chipRow: { flexGrow: 0 },
-  chipRowContent: { gap: Spacing.one, paddingVertical: Spacing.half },
-  chip: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.one, borderRadius: Spacing.four, backgroundColor: 'rgba(128,128,128,0.15)' },
+  chipRow: { flexGrow: 0, flexShrink: 0, minHeight: 48 },
+  chipRowContent: { gap: Spacing.two, paddingVertical: Spacing.one, alignItems: 'center' },
+  chip: { minHeight: 40, justifyContent: 'center', paddingHorizontal: Spacing.three, borderRadius: Spacing.four, backgroundColor: 'rgba(128,128,128,0.15)' },
   chipActive: { backgroundColor: '#ea580c' },
   chipTextActive: { color: '#fff', fontWeight: '600' },
   loading: { marginTop: Spacing.four },
+  menuFlex: { flex: 1 },
   menuList: { gap: Spacing.two, paddingBottom: Spacing.four },
   menuRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, padding: Spacing.three },
   menuRowInfo: { flex: 1 },

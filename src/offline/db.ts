@@ -19,6 +19,11 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
           last_error TEXT,
           created_at INTEGER NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS print_snapshot (
+          order_key TEXT PRIMARY KEY NOT NULL,
+          items TEXT NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
       `);
       return db;
     })();

@@ -42,7 +42,7 @@ export async function createOrder(input: CreateOrderInput): Promise<OrderSummary
 // Item-level edits on an order that already exists on the server. These match
 // what the web dashboard does: quantity is set absolutely, and adding an item
 // that is already on the order increases its quantity.
-export async function updateOrderItem(orderId: string, itemId: string, changes: { quantity?: number; notes?: string }): Promise<void> {
+export async function updateOrderItem(orderId: string, itemId: string, changes: { quantity?: number; notes?: string; unitPrice?: number }): Promise<void> {
   await apiFetch(`/api/orders/${orderId}/items/${itemId}`, { method: "PATCH", body: changes });
 }
 

@@ -15,7 +15,7 @@ import { addItem, fetchMyOrders, removeItem, updateOrderItem } from '@/api/order
 import { updateQueuedOrderItems } from '@/offline/outbox';
 import { useOutboxStore } from '@/state/outbox-store';
 import { useSessionStore } from '@/state/session-store';
-import { tableName } from '@/lib/format';
+import { tableName, sanitizePriceText } from '@/lib/format';
 import { useKitchenPrinter } from '@/print/use-kitchen-printer';
 import { groupByCategory } from '@/print/escpos';
 import { diffAgainstSnapshot, getPrintSnapshot, localOrderKey, serverOrderKey, setPrintSnapshot, type SnapshotLine } from '@/offline/print-snapshot';
@@ -26,6 +26,9 @@ interface Line {
   quantity: number;
   category?: string;
   price?: number;
+  /** Raw text backing the market-price input — kept separate from `price`
+   * so a trailing decimal point isn't lost while the user is still typing. */
+  priceText?: string;
   notes?: string;
   /** True when the menu currently lists this item at RM0 — its price was/is
    * entered by staff rather than fixed, so it stays editable here too. */
@@ -75,12 +78,14 @@ export default function EditOrderScreen() {
       setLines(
         localEntry.payload.items.map((it, i) => {
           const menuItem = menuItems.find((m) => m.id === it.menuItemId);
+          const price = localEntry.display.lines[i]?.price ?? 0;
           return {
             menuItemId: it.menuItemId,
             name: localEntry.display.lines[i]?.name ?? 'Item',
             quantity: it.quantity,
             category: localEntry.display.lines[i]?.category,
-            price: localEntry.display.lines[i]?.price,
+            price,
+            priceText: price === 0 ? '' : String(price),
             notes: it.notes ?? '',
             variablePrice: menuItem ? Number(menuItem.price) === 0 : false,
           };
@@ -90,12 +95,14 @@ export default function EditOrderScreen() {
       setLines(
         serverOrder.items.map((it) => {
           const menuItem = menuItems.find((m) => m.id === it.menuItem.id);
+          const price = Number(it.unitPrice);
           return {
             menuItemId: it.menuItem.id,
             name: it.menuItem.name,
             quantity: it.quantity,
             category: it.menuItem.category?.name,
-            price: Number(it.unitPrice),
+            price,
+            priceText: price === 0 ? '' : String(price),
             notes: it.notes ?? '',
             variablePrice: menuItem ? Number(menuItem.price) === 0 : false,
           };
@@ -121,8 +128,15 @@ export default function EditOrderScreen() {
     setLines((prev) => prev && prev.map((l) => (l.menuItemId === menuItemId ? { ...l, notes } : l)));
   }
 
-  function changePrice(menuItemId: string, price: number) {
-    setLines((prev) => prev && prev.map((l) => (l.menuItemId === menuItemId ? { ...l, price: Math.max(0, price) } : l)));
+  function changePrice(menuItemId: string, text: string) {
+    setLines((prev) =>
+      prev &&
+      prev.map((l) => {
+        if (l.menuItemId !== menuItemId) return l;
+        const priceText = sanitizePriceText(text);
+        return { ...l, priceText, price: parseFloat(priceText) || 0 };
+      })
+    );
   }
 
   function removeLine(menuItemId: string) {
@@ -142,7 +156,10 @@ export default function EditOrderScreen() {
       const existing = prev.find((l) => l.menuItemId === item.id);
       if (existing) return prev.map((l) => (l.menuItemId === item.id ? { ...l, quantity: l.quantity + 1 } : l));
       const listedPrice = Number(item.price);
-      return [...prev, { menuItemId: item.id, name: item.name, quantity: 1, category: item.category?.name, price: listedPrice, notes: '', variablePrice: listedPrice === 0 }];
+      return [
+        ...prev,
+        { menuItemId: item.id, name: item.name, quantity: 1, category: item.category?.name, price: listedPrice, priceText: listedPrice === 0 ? '' : String(listedPrice), notes: '', variablePrice: listedPrice === 0 },
+      ];
     });
   }
 
@@ -186,10 +203,12 @@ export default function EditOrderScreen() {
             if (!orig) continue;
             const quantityChanged = orig.quantity !== l.quantity;
             const notesChanged = (orig.notes ?? '') !== (l.notes ?? '');
-            if (quantityChanged || notesChanged) {
+            const priceChanged = l.variablePrice && Number(orig.unitPrice) !== l.price;
+            if (quantityChanged || notesChanged || priceChanged) {
               await updateOrderItem(serverOrder.id, orig.id, {
                 ...(quantityChanged && { quantity: l.quantity }),
                 ...(notesChanged && { notes: l.notes ?? '' }),
+                ...(priceChanged && { unitPrice: l.price }),
               });
             }
           }
@@ -237,6 +256,7 @@ export default function EditOrderScreen() {
   const search_ = search.trim().toLowerCase();
   const results = menuItems.filter((m) => !search_ || m.name.toLowerCase().includes(search_)).slice(0, 30);
   const title = localEntry ? localEntry.display.label : serverOrder ? `Order #${serverOrder.orderNumber}` : 'Edit order';
+  const total = lines?.reduce((sum, l) => sum + (l.price ?? 0) * l.quantity, 0) ?? 0;
 
   if (!lines) {
     return (
@@ -294,8 +314,8 @@ export default function EditOrderScreen() {
                             Market price:
                           </ThemedText>
                           <TextInput
-                            value={l.price === 0 ? '' : String(l.price)}
-                            onChangeText={(v) => changePrice(l.menuItemId, Number(v.replace(/[^0-9.]/g, '')) || 0)}
+                            value={l.priceText ?? ''}
+                            onChangeText={(v) => changePrice(l.menuItemId, v)}
                             keyboardType="decimal-pad"
                             placeholder="0.00"
                             placeholderTextColor={theme.textSecondary}
@@ -327,6 +347,11 @@ export default function EditOrderScreen() {
                 </ThemedView>
               ))}
             </ScrollView>
+
+            <ThemedView type="backgroundElement" style={styles.totalRow}>
+              <ThemedText type="smallBold">Total</ThemedText>
+              <ThemedText type="smallBold">{fmt(total)}</ThemedText>
+            </ThemedView>
 
             <ThemedText type="smallBold" style={styles.sectionGap}>
               Add items
@@ -378,6 +403,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, padding: Spacing.three },
   rowName: { flex: 1 },
   itemBlock: { borderRadius: Spacing.three, overflow: 'hidden' },
+  totalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
   priceEditRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, marginTop: 2 },
   priceInput: { borderRadius: Spacing.one, paddingHorizontal: Spacing.two, paddingVertical: 4, fontSize: 13, minWidth: 70 },
   noteInput: { marginHorizontal: Spacing.three, marginBottom: Spacing.two, borderRadius: Spacing.one, paddingHorizontal: Spacing.two, paddingVertical: Spacing.one, fontSize: 13 },

@@ -25,3 +25,14 @@ export function formatCurrency(amount: number | string, currencyCode = "MYR", lo
 export function tableName(tbl: { name?: string | null; number: number }): string {
   return tbl.name?.trim() || `Table ${tbl.number}`;
 }
+
+/** Keeps a price text field free-typeable: digits and at most one decimal
+ * point. Deriving the displayed text straight from `Number(text)` would
+ * collapse a trailing "12." back to "12" on every keystroke, making it
+ * impossible to type a decimal like "12.50". */
+export function sanitizePriceText(raw: string): string {
+  const cleaned = raw.replace(/[^0-9.]/g, "");
+  const firstDot = cleaned.indexOf(".");
+  if (firstDot === -1) return cleaned;
+  return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
+}

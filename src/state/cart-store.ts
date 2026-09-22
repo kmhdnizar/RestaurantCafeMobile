@@ -1,9 +1,13 @@
 import { create } from "zustand";
+import { sanitizePriceText } from "@/lib/format";
 
 export interface CartLine {
   menuItemId: string;
   name: string;
   price: number;
+  /** Raw text backing the market-price input — kept separate from `price`
+   * so a trailing decimal point isn't lost while the user is still typing. */
+  priceText: string;
   /** True when the menu lists this item at RM0 — a "market price" item
    * (e.g. daily fish) where staff enter the real price at order time. */
   variablePrice: boolean;
@@ -25,7 +29,7 @@ interface CartState {
   addItem: (item: { id: string; name: string; price: string; category: { name: string } }) => void;
   updateQuantity: (menuItemId: string, delta: number) => void;
   setLineNotes: (menuItemId: string, notes: string) => void;
-  setLinePrice: (menuItemId: string, price: number) => void;
+  setLinePrice: (menuItemId: string, text: string) => void;
   removeItem: (menuItemId: string) => void;
   reset: () => void;
 }
@@ -56,7 +60,7 @@ export const useCartStore = create<CartState>((set) => ({
       return {
         lines: [
           ...state.lines,
-          { menuItemId: item.id, name: item.name, price: listedPrice, variablePrice: listedPrice === 0, category: item.category.name, quantity: 1, notes: "" },
+          { menuItemId: item.id, name: item.name, price: listedPrice, priceText: listedPrice === 0 ? "" : String(listedPrice), variablePrice: listedPrice === 0, category: item.category.name, quantity: 1, notes: "" },
         ],
       };
     }),
@@ -68,8 +72,14 @@ export const useCartStore = create<CartState>((set) => ({
 
   setLineNotes: (menuItemId, notes) => set((state) => ({ lines: state.lines.map((l) => (l.menuItemId === menuItemId ? { ...l, notes } : l)) })),
 
-  setLinePrice: (menuItemId, price) =>
-    set((state) => ({ lines: state.lines.map((l) => (l.menuItemId === menuItemId ? { ...l, price: Math.max(0, price) } : l)) })),
+  setLinePrice: (menuItemId, text) =>
+    set((state) => ({
+      lines: state.lines.map((l) => {
+        if (l.menuItemId !== menuItemId) return l;
+        const priceText = sanitizePriceText(text);
+        return { ...l, priceText, price: parseFloat(priceText) || 0 };
+      }),
+    })),
 
   removeItem: (menuItemId) => set((state) => ({ lines: state.lines.filter((l) => l.menuItemId !== menuItemId) })),
 

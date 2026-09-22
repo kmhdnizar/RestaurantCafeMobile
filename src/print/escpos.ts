@@ -19,6 +19,10 @@ export interface Ticket {
   /** "new" (default) for a fresh order; "update" for a delta ticket printed
    * after editing an order the kitchen already has. */
   kind?: 'new' | 'update';
+  /** True for a takeaway/parcel order — banner printed at the top of every
+   * category slip so kitchen staff know to pack it, even if they only see
+   * one slip out of the set. */
+  isParcel?: boolean;
   timestamp: string;
   categories: TicketCategory[];
 }
@@ -44,6 +48,13 @@ export function buildTicketBytes(ticket: Ticket): Uint8Array {
 
   for (const category of ticket.categories) {
     bytes(ESC, 0x61, 0x01); // center
+    if (ticket.isParcel) {
+      bytes(ESC, 0x45, 0x01); // bold
+      bytes(GS, 0x21, 0x11); // double size
+      line('*** PARCEL ***');
+      bytes(GS, 0x21, 0x00);
+      bytes(ESC, 0x45, 0x00);
+    }
     bytes(ESC, 0x45, 0x01); // bold on
     bytes(GS, 0x21, 0x11); // double size
     line(category.name);

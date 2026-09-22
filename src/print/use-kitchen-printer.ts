@@ -17,6 +17,7 @@ export function ticketFromOutboxEntry(entry: OutboxEntry): TicketBody {
     orderNumber: null,
     label: entry.display.label,
     waiter: entry.display.waiter ?? null,
+    isParcel: entry.payload.type === 'TAKEAWAY',
     categories: groupByCategory(
       entry.payload.items.map((it, i) => ({
         qty: it.quantity,
@@ -33,6 +34,7 @@ export function ticketFromServerOrder(order: OrderSummary): TicketBody {
     orderNumber: order.orderNumber,
     waiter: order.waiter?.name ?? null,
     label: order.type === 'DINE_IN' ? (order.table?.name?.trim() || `Table ${order.table?.number ?? '?'}`) : (order.customerName ?? 'Takeaway'),
+    isParcel: order.type === 'TAKEAWAY',
     categories: groupByCategory(
       order.items.map((it) => ({ qty: it.quantity, name: it.menuItem.name, notes: it.notes, category: it.menuItem.category?.name ?? 'Other' }))
     ),

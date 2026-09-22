@@ -71,7 +71,12 @@ export default function NewOrderScreen() {
           tableId: cart.orderType === 'DINE_IN' ? cart.tableId : undefined,
           customerName: cart.orderType === 'TAKEAWAY' ? cart.customerName.trim() : undefined,
           notes: cart.notes || undefined,
-          items: cart.lines.map((l) => ({ menuItemId: l.menuItemId, quantity: l.quantity, notes: l.notes || undefined })),
+          items: cart.lines.map((l) => ({
+            menuItemId: l.menuItemId,
+            quantity: l.quantity,
+            notes: l.notes || undefined,
+            unitPrice: l.variablePrice ? l.price : undefined,
+          })),
         },
         {
           label: cart.orderType === 'DINE_IN' ? (table ? tableName(table) : 'Table') : cart.customerName.trim(),
@@ -86,6 +91,7 @@ export default function NewOrderScreen() {
         orderNumber: null,
         waiter: userName,
         label: cart.orderType === 'DINE_IN' ? (table ? tableName(table) : 'Table') : cart.customerName.trim(),
+        isParcel: cart.orderType === 'TAKEAWAY',
         categories: groupByCategory(cart.lines.map((l) => ({ qty: l.quantity, name: l.name, notes: l.notes || null, category: l.category }))),
       };
       // Record what's been sent so a later edit only prints the *change*,
@@ -174,7 +180,7 @@ export default function NewOrderScreen() {
                 <ThemedView type="backgroundElement" style={styles.menuRowInfo}>
                   <ThemedText type="smallBold">{item.name}</ThemedText>
                   <ThemedText themeColor="textSecondary" type="small">
-                    {fmt(Number(item.price))}
+                    {Number(item.price) === 0 ? 'Market price' : fmt(Number(item.price))}
                   </ThemedText>
                 </ThemedView>
                 {line ? (
@@ -226,25 +232,50 @@ export default function NewOrderScreen() {
               keyExtractor={(l) => l.menuItemId}
               contentContainerStyle={styles.menuList}
               renderItem={({ item: line }) => (
-                <ThemedView type="backgroundElement" style={styles.menuRow}>
-                  <ThemedView type="backgroundElement" style={styles.menuRowInfo}>
-                    <ThemedText type="smallBold">{line.name}</ThemedText>
-                    <ThemedText themeColor="textSecondary" type="small">
-                      {fmt(line.price * line.quantity)}
-                    </ThemedText>
+                <ThemedView type="backgroundElement" style={styles.cartLine}>
+                  <ThemedView type="backgroundElement" style={styles.menuRow}>
+                    <ThemedView type="backgroundElement" style={styles.menuRowInfo}>
+                      <ThemedText type="smallBold">{line.name}</ThemedText>
+                      {line.variablePrice ? (
+                        <ThemedView type="backgroundElement" style={styles.priceEditRow}>
+                          <ThemedText themeColor="textSecondary" type="small">
+                            Market price:
+                          </ThemedText>
+                          <TextInput
+                            value={line.price === 0 ? '' : String(line.price)}
+                            onChangeText={(v) => cart.setLinePrice(line.menuItemId, Number(v.replace(/[^0-9.]/g, '')) || 0)}
+                            keyboardType="decimal-pad"
+                            placeholder="0.00"
+                            placeholderTextColor={theme.textSecondary}
+                            style={[styles.priceInput, { color: theme.text, backgroundColor: theme.background }]}
+                          />
+                        </ThemedView>
+                      ) : (
+                        <ThemedText themeColor="textSecondary" type="small">
+                          {fmt(line.price * line.quantity)}
+                        </ThemedText>
+                      )}
+                    </ThemedView>
+                    <ThemedView type="backgroundElement" style={styles.qtyControl}>
+                      <Pressable onPress={() => cart.updateQuantity(line.menuItemId, -1)} style={styles.qtyButton}>
+                        <ThemedText style={styles.qtyButtonText}>−</ThemedText>
+                      </Pressable>
+                      <ThemedText style={styles.qtyValue}>{line.quantity}</ThemedText>
+                      <Pressable onPress={() => cart.updateQuantity(line.menuItemId, 1)} style={styles.qtyButton}>
+                        <ThemedText style={styles.qtyButtonText}>+</ThemedText>
+                      </Pressable>
+                      <Pressable onPress={() => cart.removeItem(line.menuItemId)} style={styles.removeButton}>
+                        <ThemedText style={styles.removeButtonText}>✕</ThemedText>
+                      </Pressable>
+                    </ThemedView>
                   </ThemedView>
-                  <ThemedView type="backgroundElement" style={styles.qtyControl}>
-                    <Pressable onPress={() => cart.updateQuantity(line.menuItemId, -1)} style={styles.qtyButton}>
-                      <ThemedText style={styles.qtyButtonText}>−</ThemedText>
-                    </Pressable>
-                    <ThemedText style={styles.qtyValue}>{line.quantity}</ThemedText>
-                    <Pressable onPress={() => cart.updateQuantity(line.menuItemId, 1)} style={styles.qtyButton}>
-                      <ThemedText style={styles.qtyButtonText}>+</ThemedText>
-                    </Pressable>
-                    <Pressable onPress={() => cart.removeItem(line.menuItemId)} style={styles.removeButton}>
-                      <ThemedText style={styles.removeButtonText}>✕</ThemedText>
-                    </Pressable>
-                  </ThemedView>
+                  <TextInput
+                    value={line.notes}
+                    onChangeText={(v) => cart.setLineNotes(line.menuItemId, v)}
+                    placeholder="Note for this item (size, allergy, extra request…)"
+                    placeholderTextColor={theme.textSecondary}
+                    style={[styles.noteInput, { color: theme.text, backgroundColor: theme.background }]}
+                  />
                 </ThemedView>
               )}
               ListEmptyComponent={<ThemedText themeColor="textSecondary">Cart is empty.</ThemedText>}
@@ -294,6 +325,10 @@ const styles = StyleSheet.create({
   menuList: { gap: Spacing.two, paddingBottom: Spacing.four },
   menuRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, padding: Spacing.three },
   menuRowInfo: { flex: 1 },
+  cartLine: { borderRadius: Spacing.three, overflow: 'hidden' },
+  priceEditRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, marginTop: 2 },
+  priceInput: { borderRadius: Spacing.one, paddingHorizontal: Spacing.two, paddingVertical: 4, fontSize: 13, minWidth: 70 },
+  noteInput: { marginHorizontal: Spacing.three, marginBottom: Spacing.two, borderRadius: Spacing.one, paddingHorizontal: Spacing.two, paddingVertical: Spacing.one, fontSize: 13 },
   addButton: { backgroundColor: '#ea580c', borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one },
   addButtonText: { color: '#fff', fontWeight: '600' },
   qtyControl: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },

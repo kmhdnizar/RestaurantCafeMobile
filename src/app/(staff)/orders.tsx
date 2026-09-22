@@ -13,7 +13,7 @@ import { fetchMyOrders, type OrderSummary } from '@/api/orders';
 import { flushOutbox } from '@/offline/sync-engine';
 import { useOutboxStore } from '@/state/outbox-store';
 import type { OutboxEntry } from '@/offline/outbox';
-import { ticketFromOutboxEntry, ticketFromServerOrder, useKitchenPrinter } from '@/print/use-kitchen-printer';
+import { receiptFromServerOrder, ticketFromOutboxEntry, ticketFromServerOrder, useKitchenPrinter } from '@/print/use-kitchen-printer';
 import { createBill, type Bill } from '@/api/bills';
 import { ApiError } from '@/api/client';
 import { useSessionStore } from '@/state/session-store';
@@ -195,6 +195,18 @@ export default function MyOrdersScreen() {
                 {kitchen.enabled && (
                   <Pressable onPress={() => void kitchen.print(ticketFromServerOrder(order))} disabled={kitchen.printing} style={styles.printButton}>
                     <ThemedText style={styles.printText}>{kitchen.printing ? 'Printing…' : 'Print ticket'}</ThemedText>
+                  </Pressable>
+                )}
+                {kitchen.canPrintReceipts && order.bill && (
+                  <Pressable
+                    onPress={() => {
+                      const receipt = receiptFromServerOrder(order, restaurantName ?? '', fmt);
+                      if (receipt) void kitchen.printReceipt(receipt);
+                    }}
+                    disabled={kitchen.printing}
+                    style={styles.printButton}
+                  >
+                    <ThemedText style={styles.printText}>{kitchen.printing ? 'Printing…' : 'Reprint receipt'}</ThemedText>
                   </Pressable>
                 )}
               </ThemedView>

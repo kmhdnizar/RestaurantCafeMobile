@@ -10,6 +10,9 @@ export interface OrderSummary {
   waiter: { id: string; name: string } | null;
   items: { id: string; quantity: number; unitPrice: string; notes: string | null; menuItem: { id: string; name: string; category?: { id: string; name: string } } }[];
   createdAt: string;
+  // Already included by the server response — was just untyped here.
+  // Present once the order has been completed (see api/bills.ts).
+  bill: { id: string; subtotal: string; discount: string; total: string; paymentMethod: "CASH" | "QR" | "STAFF_FOOD"; paidAt: string | null } | null;
 }
 
 export async function fetchMyOrders(): Promise<OrderSummary[]> {

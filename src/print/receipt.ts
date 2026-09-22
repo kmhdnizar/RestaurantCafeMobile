@@ -2,21 +2,14 @@
 // restaurant setup) — plain-width text since, unlike a kitchen ticket, it
 // doesn't need to be readable from across a busy kitchen.
 
+import { toPrinterText } from '@/print/printer-text';
+
 const ESC = 0x1b;
 const GS = 0x1d;
 const LF = 0x0a;
 const LINE_WIDTH = 48;
 
 const PAYMENT_LABEL: Record<string, string> = { CASH: 'Cash', QR: 'QR Pay', STAFF_FOOD: 'Staff Food' };
-
-function toPrinterText(text: string): string {
-  return text
-    .replace(/[–—−]/g, '-')
-    .replace(/[‘’]/g, "'")
-    .replace(/[“”]/g, '"')
-    .replace(/…/g, '...')
-    .replace(/[^\x20-\x7e]/g, '?');
-}
 
 /** "2x Fried Chicken Thai Sos" left, "RM 14.00" right, on one 48-char line —
  * or two lines if the name is too long to leave room for the price. */
@@ -94,7 +87,9 @@ export function buildReceiptBytes(receipt: Receipt): Uint8Array {
   center();
   line('Thank you!');
 
-  for (let i = 0; i < 3; i++) out.push(LF);
+  // Same cutter-clearance fix as the kitchen ticket — 3 lines wasn't enough
+  // on the printer used for testing.
+  for (let i = 0; i < 8; i++) out.push(LF);
   bytes(GS, 0x56, 0x00); // full cut
 
   return Uint8Array.from(out);

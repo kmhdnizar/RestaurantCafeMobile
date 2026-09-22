@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { fetchConfig } from '@/api/menu';
 import type { OrderSummary } from '@/api/orders';
 import type { OutboxEntry } from '@/offline/outbox';
+import { tableName } from '@/lib/format';
 import { buildTicketBytes, groupByCategory, type Ticket } from '@/print/escpos';
 import { buildReceiptBytes, type Receipt } from '@/print/receipt';
 import { sendToPrinter } from '@/print/printer-client';
@@ -16,6 +17,7 @@ export function ticketFromOutboxEntry(entry: OutboxEntry): TicketBody {
     orderNumber: null,
     label: entry.display.label,
     waiter: entry.display.waiter ?? null,
+    isParcel: entry.payload.type === 'TAKEAWAY',
     categories: groupByCategory(
       entry.payload.items.map((it, i) => ({
         qty: it.quantity,
@@ -32,9 +34,29 @@ export function ticketFromServerOrder(order: OrderSummary): TicketBody {
     orderNumber: order.orderNumber,
     waiter: order.waiter?.name ?? null,
     label: order.type === 'DINE_IN' ? (order.table?.name?.trim() || `Table ${order.table?.number ?? '?'}`) : (order.customerName ?? 'Takeaway'),
+    isParcel: order.type === 'TAKEAWAY',
     categories: groupByCategory(
       order.items.map((it) => ({ qty: it.quantity, name: it.menuItem.name, notes: it.notes, category: it.menuItem.category?.name ?? 'Other' }))
     ),
+  };
+}
+
+/** Rebuilds a receipt for an order that's already been completed, for
+ * reprinting — uses the bill the server already stored, not a fresh
+ * calculation, so a reprint always matches what was actually charged. */
+export function receiptFromServerOrder(order: OrderSummary, restaurantName: string, formatMoney: (n: number) => string): Omit<Receipt, 'timestamp'> | null {
+  if (!order.bill) return null;
+  return {
+    restaurantName,
+    orderNumber: order.orderNumber,
+    label: order.type === 'DINE_IN' ? (order.table ? tableName(order.table) : 'Table') : (order.customerName ?? 'Takeaway'),
+    waiter: order.waiter?.name,
+    items: order.items.map((it) => ({ qty: it.quantity, name: it.menuItem.name, unitPrice: Number(it.unitPrice) })),
+    subtotal: Number(order.bill.subtotal),
+    discount: Number(order.bill.discount),
+    total: Number(order.bill.total),
+    paymentMethod: order.bill.paymentMethod,
+    formatMoney,
   };
 }
 

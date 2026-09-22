@@ -3,6 +3,8 @@
 // tickets look similar: one section per menu category, each ending in a
 // real paper-cut command. Keep the two in sync by hand.
 
+import { toPrinterText } from '@/print/printer-text';
+
 export interface TicketCategory {
   name: string;
   items: { qty: number; name: string; notes?: string | null; cancelled?: boolean }[];
@@ -17,6 +19,10 @@ export interface Ticket {
   /** "new" (default) for a fresh order; "update" for a delta ticket printed
    * after editing an order the kitchen already has. */
   kind?: 'new' | 'update';
+  /** True for a takeaway/parcel order — banner printed at the top of every
+   * category slip so kitchen staff know to pack it, even if they only see
+   * one slip out of the set. */
+  isParcel?: boolean;
   timestamp: string;
   categories: TicketCategory[];
 }
@@ -27,17 +33,6 @@ const LF = 0x0a;
 
 // The kitchen printer's paper is 48 characters wide at normal size.
 const LINE_WIDTH = 48;
-
-/** Thermal printers use a legacy single-byte character set, so anything
- * outside plain ASCII (long dashes, curly quotes) prints as garbage. */
-function toPrinterText(text: string): string {
-  return text
-    .replace(/[–—−]/g, '-')
-    .replace(/[‘’]/g, "'")
-    .replace(/[“”]/g, '"')
-    .replace(/…/g, '...')
-    .replace(/[^\x20-\x7e]/g, '?');
-}
 
 export function buildTicketBytes(ticket: Ticket): Uint8Array {
   const out: number[] = [];
@@ -53,6 +48,13 @@ export function buildTicketBytes(ticket: Ticket): Uint8Array {
 
   for (const category of ticket.categories) {
     bytes(ESC, 0x61, 0x01); // center
+    if (ticket.isParcel) {
+      bytes(ESC, 0x45, 0x01); // bold
+      bytes(GS, 0x21, 0x11); // double size
+      line('*** PARCEL ***');
+      bytes(GS, 0x21, 0x00);
+      bytes(ESC, 0x45, 0x00);
+    }
     bytes(ESC, 0x45, 0x01); // bold on
     bytes(GS, 0x21, 0x11); // double size
     line(category.name);
@@ -93,7 +95,10 @@ export function buildTicketBytes(ticket: Ticket): Uint8Array {
       }
     }
 
-    for (let i = 0; i < 3; i++) out.push(LF); // feed
+    // The cutter sits a fixed distance below the print head; 3 blank lines
+    // wasn't enough clearance on the actual printer used for testing and
+    // the cut landed on/through the last printed line. 8 gives a safe margin.
+    for (let i = 0; i < 8; i++) out.push(LF); // feed
     bytes(GS, 0x56, 0x00); // full cut
   }
 

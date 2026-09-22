@@ -10,6 +10,9 @@ export interface OrderSummary {
   waiter: { id: string; name: string } | null;
   items: { id: string; quantity: number; unitPrice: string; notes: string | null; menuItem: { id: string; name: string; category?: { id: string; name: string } } }[];
   createdAt: string;
+  // Already included by the server response — was just untyped here.
+  // Present once the order has been completed (see api/bills.ts).
+  bill: { id: string; subtotal: string; discount: string; total: string; paymentMethod: "CASH" | "QR" | "STAFF_FOOD"; paidAt: string | null } | null;
 }
 
 export async function fetchMyOrders(): Promise<OrderSummary[]> {
@@ -21,7 +24,13 @@ export interface CreateOrderInput {
   tableId?: string;
   customerName?: string;
   notes?: string;
-  items: { menuItemId: string; quantity: number; notes?: string }[];
+  items: {
+    menuItemId: string;
+    quantity: number;
+    notes?: string;
+    /** Only honored server-side when the menu item's own listed price is RM0. */
+    unitPrice?: number;
+  }[];
   /** Idempotency key: the server returns the existing order instead of creating a duplicate. */
   clientRef?: string;
 }
@@ -33,14 +42,14 @@ export async function createOrder(input: CreateOrderInput): Promise<OrderSummary
 // Item-level edits on an order that already exists on the server. These match
 // what the web dashboard does: quantity is set absolutely, and adding an item
 // that is already on the order increases its quantity.
-export async function setItemQuantity(orderId: string, itemId: string, quantity: number): Promise<void> {
-  await apiFetch(`/api/orders/${orderId}/items/${itemId}`, { method: "PATCH", body: { quantity } });
+export async function updateOrderItem(orderId: string, itemId: string, changes: { quantity?: number; notes?: string }): Promise<void> {
+  await apiFetch(`/api/orders/${orderId}/items/${itemId}`, { method: "PATCH", body: changes });
 }
 
 export async function removeItem(orderId: string, itemId: string): Promise<void> {
   await apiFetch(`/api/orders/${orderId}/items/${itemId}`, { method: "DELETE" });
 }
 
-export async function addItem(orderId: string, menuItemId: string, quantity: number): Promise<void> {
-  await apiFetch(`/api/orders/${orderId}/items`, { method: "POST", body: { menuItemId, quantity } });
+export async function addItem(orderId: string, input: { menuItemId: string; quantity: number; notes?: string; unitPrice?: number }): Promise<void> {
+  await apiFetch(`/api/orders/${orderId}/items`, { method: "POST", body: input });
 }

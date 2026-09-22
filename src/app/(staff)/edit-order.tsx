@@ -11,7 +11,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { useOrderableMenu } from '@/hooks/use-orderable-menu';
 import { Spacing } from '@/constants/theme';
 import { ApiError } from '@/api/client';
-import { addItem, fetchMyOrders, removeItem, setItemQuantity } from '@/api/orders';
+import { addItem, fetchMyOrders, removeItem, updateOrderItem } from '@/api/orders';
 import { updateQueuedOrderItems } from '@/offline/outbox';
 import { useOutboxStore } from '@/state/outbox-store';
 import { useSessionStore } from '@/state/session-store';
@@ -26,6 +26,10 @@ interface Line {
   quantity: number;
   category?: string;
   price?: number;
+  notes?: string;
+  /** True when the menu currently lists this item at RM0 — its price was/is
+   * entered by staff rather than fixed, so it stays editable here too. */
+  variablePrice?: boolean;
 }
 
 /**
@@ -47,6 +51,7 @@ export default function EditOrderScreen() {
 
   const localEntry = kind === 'local' ? outbox.find((e) => e.clientRef === ref) : undefined;
   const serverOrder = kind === 'server' ? ordersQuery.data?.find((o) => o.id === ref) : undefined;
+  const isParcel = (localEntry ? localEntry.payload.type : serverOrder?.type) === 'TAKEAWAY';
 
   const [lines, setLines] = useState<Line[] | null>(null);
   const [search, setSearch] = useState('');
@@ -60,15 +65,44 @@ export default function EditOrderScreen() {
     setLines(null);
   }, [ref]);
 
-  // Then load the starting lines for whichever order is now selected.
+  // Then load the starting lines for whichever order is now selected. Whether
+  // an item's price is still editable depends on the menu's *current* listed
+  // price, not what this order happened to store, so it's resolved here
+  // against the live menu rather than carried in the order data.
   useEffect(() => {
     if (lines) return;
     if (localEntry) {
-      setLines(localEntry.payload.items.map((it, i) => ({ menuItemId: it.menuItemId, name: localEntry.display.lines[i]?.name ?? 'Item', quantity: it.quantity, category: localEntry.display.lines[i]?.category, price: localEntry.display.lines[i]?.price })));
+      setLines(
+        localEntry.payload.items.map((it, i) => {
+          const menuItem = menuItems.find((m) => m.id === it.menuItemId);
+          return {
+            menuItemId: it.menuItemId,
+            name: localEntry.display.lines[i]?.name ?? 'Item',
+            quantity: it.quantity,
+            category: localEntry.display.lines[i]?.category,
+            price: localEntry.display.lines[i]?.price,
+            notes: it.notes ?? '',
+            variablePrice: menuItem ? Number(menuItem.price) === 0 : false,
+          };
+        })
+      );
     } else if (serverOrder) {
-      setLines(serverOrder.items.map((it) => ({ menuItemId: it.menuItem.id, name: it.menuItem.name, quantity: it.quantity, category: it.menuItem.category?.name, price: Number(it.unitPrice) })));
+      setLines(
+        serverOrder.items.map((it) => {
+          const menuItem = menuItems.find((m) => m.id === it.menuItem.id);
+          return {
+            menuItemId: it.menuItem.id,
+            name: it.menuItem.name,
+            quantity: it.quantity,
+            category: it.menuItem.category?.name,
+            price: Number(it.unitPrice),
+            notes: it.notes ?? '',
+            variablePrice: menuItem ? Number(menuItem.price) === 0 : false,
+          };
+        })
+      );
     }
-  }, [lines, localEntry, serverOrder]);
+  }, [lines, localEntry, serverOrder, menuItems]);
 
   const notEditableReason =
     kind === 'local' && localEntry && localEntry.status !== 'pending'
@@ -81,6 +115,14 @@ export default function EditOrderScreen() {
 
   function changeQty(menuItemId: string, delta: number) {
     setLines((prev) => prev && prev.map((l) => (l.menuItemId === menuItemId ? { ...l, quantity: Math.max(1, l.quantity + delta) } : l)));
+  }
+
+  function changeNotes(menuItemId: string, notes: string) {
+    setLines((prev) => prev && prev.map((l) => (l.menuItemId === menuItemId ? { ...l, notes } : l)));
+  }
+
+  function changePrice(menuItemId: string, price: number) {
+    setLines((prev) => prev && prev.map((l) => (l.menuItemId === menuItemId ? { ...l, price: Math.max(0, price) } : l)));
   }
 
   function removeLine(menuItemId: string) {
@@ -99,7 +141,8 @@ export default function EditOrderScreen() {
       if (!prev) return prev;
       const existing = prev.find((l) => l.menuItemId === item.id);
       if (existing) return prev.map((l) => (l.menuItemId === item.id ? { ...l, quantity: l.quantity + 1 } : l));
-      return [...prev, { menuItemId: item.id, name: item.name, quantity: 1, category: item.category?.name, price: Number(item.price) }];
+      const listedPrice = Number(item.price);
+      return [...prev, { menuItemId: item.id, name: item.name, quantity: 1, category: item.category?.name, price: listedPrice, notes: '', variablePrice: listedPrice === 0 }];
     });
   }
 
@@ -114,7 +157,7 @@ export default function EditOrderScreen() {
       if (kind === 'local' && localEntry && userId) {
         const ok = await updateQueuedOrderItems(
           localEntry.clientRef,
-          lines.map((l) => ({ menuItemId: l.menuItemId, quantity: l.quantity })),
+          lines.map((l) => ({ menuItemId: l.menuItemId, quantity: l.quantity, notes: l.notes || undefined, unitPrice: l.variablePrice ? l.price : undefined })),
           { label: localEntry.display.label, waiter: localEntry.display.waiter, lines: lines.map((l) => ({ name: l.name, quantity: l.quantity, category: l.category, price: l.price })) }
         );
         if (!ok) {
@@ -131,12 +174,24 @@ export default function EditOrderScreen() {
         const original = new Map(serverOrder.items.map((it) => [it.menuItem.id, it]));
         const edited = new Map(lines.map((l) => [l.menuItemId, l]));
         try {
-          // Adds first, then quantity changes, then removals — so an order
-          // never momentarily has zero items (the server forbids that).
-          for (const l of lines) if (!original.has(l.menuItemId)) await addItem(serverOrder.id, l.menuItemId, l.quantity);
+          // Adds first, then quantity/notes changes, then removals — so an
+          // order never momentarily has zero items (the server forbids that).
+          for (const l of lines) {
+            if (!original.has(l.menuItemId)) {
+              await addItem(serverOrder.id, { menuItemId: l.menuItemId, quantity: l.quantity, notes: l.notes || undefined, unitPrice: l.variablePrice ? l.price : undefined });
+            }
+          }
           for (const l of lines) {
             const orig = original.get(l.menuItemId);
-            if (orig && orig.quantity !== l.quantity) await setItemQuantity(serverOrder.id, orig.id, l.quantity);
+            if (!orig) continue;
+            const quantityChanged = orig.quantity !== l.quantity;
+            const notesChanged = (orig.notes ?? '') !== (l.notes ?? '');
+            if (quantityChanged || notesChanged) {
+              await updateOrderItem(serverOrder.id, orig.id, {
+                ...(quantityChanged && { quantity: l.quantity }),
+                ...(notesChanged && { notes: l.notes ?? '' }),
+              });
+            }
           }
           for (const [menuItemId, orig] of original) if (!edited.has(menuItemId)) await removeItem(serverOrder.id, orig.id);
         } catch (e) {
@@ -153,7 +208,7 @@ export default function EditOrderScreen() {
       // look like a duplicate ticket for items already being cooked.
       const snapshotKey = kind === 'local' && localEntry ? localOrderKey(localEntry.clientRef) : kind === 'server' && serverOrder ? serverOrderKey(serverOrder.id) : null;
       if (snapshotKey) {
-        const currentSnapshot: SnapshotLine[] = lines.map((l) => ({ menuItemId: l.menuItemId, name: l.name, category: l.category ?? 'Other', quantity: l.quantity }));
+        const currentSnapshot: SnapshotLine[] = lines.map((l) => ({ menuItemId: l.menuItemId, name: l.name, category: l.category ?? 'Other', quantity: l.quantity, notes: l.notes || null }));
         const previous = await getPrintSnapshot(snapshotKey);
         const delta = diffAgainstSnapshot(currentSnapshot, previous);
         if (kitchen.enabled && (delta.added.length || delta.removed.length)) {
@@ -163,8 +218,9 @@ export default function EditOrderScreen() {
             waiter: localEntry?.display.waiter ?? serverOrder?.waiter?.name ?? userName,
             label: orderLabel,
             kind: 'update',
+            isParcel,
             categories: groupByCategory([
-              ...delta.added.map((l) => ({ qty: l.quantity, name: l.name, category: l.category })),
+              ...delta.added.map((l) => ({ qty: l.quantity, name: l.name, notes: l.notes, category: l.category })),
               ...delta.removed.map((l) => ({ qty: l.quantity, name: l.name, category: l.category, cancelled: true })),
             ]),
           });
@@ -228,20 +284,46 @@ export default function EditOrderScreen() {
                 pushes the "Add items" search and results off screen. */}
             <ScrollView style={styles.itemsScroll} nestedScrollEnabled contentContainerStyle={styles.itemsScrollContent}>
               {lines.map((l) => (
-                <ThemedView key={l.menuItemId} type="backgroundElement" style={styles.row}>
-                  <ThemedText style={styles.rowName}>{l.name}</ThemedText>
-                  <ThemedView type="backgroundElement" style={styles.qtyControl}>
-                    <Pressable onPress={() => changeQty(l.menuItemId, -1)} style={styles.qtyButton}>
-                      <ThemedText style={styles.qtyButtonText}>−</ThemedText>
-                    </Pressable>
-                    <ThemedText style={styles.qtyValue}>{l.quantity}</ThemedText>
-                    <Pressable onPress={() => changeQty(l.menuItemId, 1)} style={styles.qtyButton}>
-                      <ThemedText style={styles.qtyButtonText}>+</ThemedText>
-                    </Pressable>
-                    <Pressable onPress={() => removeLine(l.menuItemId)}>
-                      <ThemedText style={styles.removeText}>✕</ThemedText>
-                    </Pressable>
+                <ThemedView key={l.menuItemId} type="backgroundElement" style={styles.itemBlock}>
+                  <ThemedView type="backgroundElement" style={styles.row}>
+                    <ThemedView type="backgroundElement" style={styles.rowName}>
+                      <ThemedText>{l.name}</ThemedText>
+                      {l.variablePrice && (
+                        <ThemedView type="backgroundElement" style={styles.priceEditRow}>
+                          <ThemedText themeColor="textSecondary" type="small">
+                            Market price:
+                          </ThemedText>
+                          <TextInput
+                            value={l.price === 0 ? '' : String(l.price)}
+                            onChangeText={(v) => changePrice(l.menuItemId, Number(v.replace(/[^0-9.]/g, '')) || 0)}
+                            keyboardType="decimal-pad"
+                            placeholder="0.00"
+                            placeholderTextColor={theme.textSecondary}
+                            style={[styles.priceInput, { color: theme.text, backgroundColor: theme.background }]}
+                          />
+                        </ThemedView>
+                      )}
+                    </ThemedView>
+                    <ThemedView type="backgroundElement" style={styles.qtyControl}>
+                      <Pressable onPress={() => changeQty(l.menuItemId, -1)} style={styles.qtyButton}>
+                        <ThemedText style={styles.qtyButtonText}>−</ThemedText>
+                      </Pressable>
+                      <ThemedText style={styles.qtyValue}>{l.quantity}</ThemedText>
+                      <Pressable onPress={() => changeQty(l.menuItemId, 1)} style={styles.qtyButton}>
+                        <ThemedText style={styles.qtyButtonText}>+</ThemedText>
+                      </Pressable>
+                      <Pressable onPress={() => removeLine(l.menuItemId)}>
+                        <ThemedText style={styles.removeText}>✕</ThemedText>
+                      </Pressable>
+                    </ThemedView>
                   </ThemedView>
+                  <TextInput
+                    value={l.notes}
+                    onChangeText={(v) => changeNotes(l.menuItemId, v)}
+                    placeholder="Note for this item (size, allergy, extra request…)"
+                    placeholderTextColor={theme.textSecondary}
+                    style={[styles.noteInput, { color: theme.text, backgroundColor: theme.background }]}
+                  />
                 </ThemedView>
               ))}
             </ScrollView>
@@ -267,7 +349,7 @@ export default function EditOrderScreen() {
                   <ThemedView type="backgroundElement" style={styles.rowName}>
                     <ThemedText type="smallBold">{item.name}</ThemedText>
                     <ThemedText themeColor="textSecondary" type="small">
-                      {fmt(Number(item.price))}
+                      {Number(item.price) === 0 ? 'Market price' : fmt(Number(item.price))}
                     </ThemedText>
                   </ThemedView>
                   <Pressable onPress={() => addLine(item)} style={styles.addButton}>
@@ -295,6 +377,10 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, padding: Spacing.three, gap: Spacing.two },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, padding: Spacing.three },
   rowName: { flex: 1 },
+  itemBlock: { borderRadius: Spacing.three, overflow: 'hidden' },
+  priceEditRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, marginTop: 2 },
+  priceInput: { borderRadius: Spacing.one, paddingHorizontal: Spacing.two, paddingVertical: 4, fontSize: 13, minWidth: 70 },
+  noteInput: { marginHorizontal: Spacing.three, marginBottom: Spacing.two, borderRadius: Spacing.one, paddingHorizontal: Spacing.two, paddingVertical: Spacing.one, fontSize: 13 },
   qtyControl: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   qtyButton: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(128,128,128,0.2)', alignItems: 'center', justifyContent: 'center' },
   qtyButtonText: { fontSize: 18, lineHeight: 20 },
@@ -302,7 +388,7 @@ const styles = StyleSheet.create({
   removeText: { color: '#dc2626', marginLeft: Spacing.two },
   sectionGap: { marginTop: Spacing.two },
   input: { borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, fontSize: 15 },
-  itemsScroll: { maxHeight: 220, flexGrow: 0 },
+  itemsScroll: { maxHeight: 260, flexGrow: 0 },
   itemsScrollContent: { gap: Spacing.two },
   menuList: { flex: 1, minHeight: 120 },
   menuListContent: { gap: Spacing.two },

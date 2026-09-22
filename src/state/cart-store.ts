@@ -4,6 +4,9 @@ export interface CartLine {
   menuItemId: string;
   name: string;
   price: number;
+  /** True when the menu lists this item at RM0 — a "market price" item
+   * (e.g. daily fish) where staff enter the real price at order time. */
+  variablePrice: boolean;
   category: string;
   quantity: number;
   notes: string;
@@ -21,6 +24,8 @@ interface CartState {
   setNotes: (notes: string) => void;
   addItem: (item: { id: string; name: string; price: string; category: { name: string } }) => void;
   updateQuantity: (menuItemId: string, delta: number) => void;
+  setLineNotes: (menuItemId: string, notes: string) => void;
+  setLinePrice: (menuItemId: string, price: number) => void;
   removeItem: (menuItemId: string) => void;
   reset: () => void;
 }
@@ -47,13 +52,24 @@ export const useCartStore = create<CartState>((set) => ({
       if (existing) {
         return { lines: state.lines.map((l) => (l.menuItemId === item.id ? { ...l, quantity: l.quantity + 1 } : l)) };
       }
-      return { lines: [...state.lines, { menuItemId: item.id, name: item.name, price: Number(item.price), category: item.category.name, quantity: 1, notes: "" }] };
+      const listedPrice = Number(item.price);
+      return {
+        lines: [
+          ...state.lines,
+          { menuItemId: item.id, name: item.name, price: listedPrice, variablePrice: listedPrice === 0, category: item.category.name, quantity: 1, notes: "" },
+        ],
+      };
     }),
 
   updateQuantity: (menuItemId, delta) =>
     set((state) => ({
       lines: state.lines.map((l) => (l.menuItemId === menuItemId ? { ...l, quantity: Math.max(1, l.quantity + delta) } : l)),
     })),
+
+  setLineNotes: (menuItemId, notes) => set((state) => ({ lines: state.lines.map((l) => (l.menuItemId === menuItemId ? { ...l, notes } : l)) })),
+
+  setLinePrice: (menuItemId, price) =>
+    set((state) => ({ lines: state.lines.map((l) => (l.menuItemId === menuItemId ? { ...l, price: Math.max(0, price) } : l)) })),
 
   removeItem: (menuItemId) => set((state) => ({ lines: state.lines.filter((l) => l.menuItemId !== menuItemId) })),
 

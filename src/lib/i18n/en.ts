@@ -17,6 +17,7 @@ const en = {
     notePlaceholder: "Note for this item (size, allergy, extra request…)",
     addNote: "+ Add note",
     searchMenuPlaceholder: "Search menu…",
+    marketPriceRequired: "Enter a price for: {items} (type 0 if there's genuinely no charge).",
   },
   tabs: {
     newOrder: "New Order",

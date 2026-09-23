@@ -185,6 +185,13 @@ export default function EditOrderScreen() {
       setError(t('editOrder.mustKeepOneItem'));
       return;
     }
+    // A blank market-price field silently saves as RM0 — force staff to
+    // type something (even "0") so a skipped price can't slip through.
+    const unpriced = lines.filter((l) => l.variablePrice && (l.priceText ?? '').trim() === '');
+    if (unpriced.length > 0) {
+      setError(t('common.marketPriceRequired', { items: unpriced.map((l) => l.name).join(', ') }));
+      return;
+    }
     setError(null);
     setSaving(true);
     try {

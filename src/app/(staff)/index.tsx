@@ -71,6 +71,13 @@ export default function NewOrderScreen() {
       setError(t('newOrder.errorEnterCustomerName'));
       return;
     }
+    // A blank market-price field silently submits as RM0 — force staff to
+    // type something (even "0") so a skipped price can't slip through.
+    const unpriced = cart.lines.filter((l) => l.variablePrice && l.priceText.trim() === '');
+    if (unpriced.length > 0) {
+      setError(t('common.marketPriceRequired', { items: unpriced.map((l) => l.name).join(', ') }));
+      return;
+    }
     if (!userId) return;
     setSubmitting(true);
 

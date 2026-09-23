@@ -18,6 +18,7 @@ const ms: Dictionary = {
     notePlaceholder: "Nota untuk item ini (saiz, alahan, permintaan tambahan…)",
     addNote: "+ Tambah nota",
     searchMenuPlaceholder: "Cari menu...",
+    marketPriceRequired: "Masukkan harga untuk: {items} (taip 0 jika sememangnya percuma).",
   },
   tabs: {
     newOrder: "Pesanan Baharu",

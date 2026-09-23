@@ -12,7 +12,7 @@ import { useOrderableMenu } from '@/hooks/use-orderable-menu';
 import { fetchMyOrders, type OrderSummary } from '@/api/orders';
 import { flushOutbox } from '@/offline/sync-engine';
 import { useOutboxStore } from '@/state/outbox-store';
-import type { OutboxEntry } from '@/offline/outbox';
+import { removeEntry, type OutboxEntry } from '@/offline/outbox';
 import { receiptFromServerOrder, ticketFromOutboxEntry, ticketFromServerOrder, useKitchenPrinter } from '@/print/use-kitchen-printer';
 import { createBill, type Bill } from '@/api/bills';
 import { ApiError } from '@/api/client';
@@ -50,8 +50,10 @@ export default function MyOrdersScreen() {
   const kitchen = useKitchenPrinter();
   const { fmt } = useOrderableMenu();
   const restaurantName = useSessionStore((s) => s.user?.restaurantName ?? null);
+  const userId = useSessionStore((s) => s.user?.id ?? null);
   const query = useQuery({ queryKey: ['orders', 'mine'], queryFn: fetchMyOrders });
   const outbox = useOutboxStore((s) => s.entries);
+  const refreshOutbox = useOutboxStore((s) => s.refresh);
   const [completingOrder, setCompletingOrder] = useState<OrderSummary | null>(null);
   const [completing, setCompleting] = useState(false);
 
@@ -65,6 +67,22 @@ export default function MyOrdersScreen() {
   function refresh() {
     void flushOutbox();
     return queryClient.invalidateQueries({ queryKey: ['orders', 'mine'] });
+  }
+
+  function discardEntry(clientRef: string) {
+    Alert.alert(t('myOrders.discardTitle'), t('myOrders.discardMessage'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('myOrders.discard'),
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            await removeEntry(clientRef);
+            await refreshOutbox(userId);
+          })();
+        },
+      },
+    ]);
   }
 
   async function completeOrder(order: OrderSummary, paymentMethod: Bill['paymentMethod']) {
@@ -143,9 +161,14 @@ export default function MyOrdersScreen() {
                     <ThemedText type="smallBold">{t('myOrders.totalAmount', { amount: fmt(entry.display.lines.reduce((sum, l) => sum + (l.price ?? 0) * l.quantity, 0)) })}</ThemedText>
                   )}
                   {failed ? (
-                    <ThemedText style={styles.failedText} type="small">
-                      {t('myOrders.failedText', { error: entry.lastError ?? '' })}
-                    </ThemedText>
+                    <>
+                      <ThemedText style={styles.failedText} type="small">
+                        {t('myOrders.failedText', { error: entry.lastError ?? '' })}
+                      </ThemedText>
+                      <Pressable onPress={() => discardEntry(entry.clientRef)} style={styles.discardButton}>
+                        <ThemedText style={styles.discardText}>{t('myOrders.discard')}</ThemedText>
+                      </Pressable>
+                    </>
                   ) : (
                     <ThemedText themeColor="textSecondary" type="small">
                       {t('myOrders.savedOnPhone')}
@@ -262,6 +285,8 @@ const styles = StyleSheet.create({
   failedText: { color: '#dc2626', marginTop: Spacing.one },
   printButton: { alignSelf: 'flex-start', marginTop: Spacing.one, borderWidth: 1, borderColor: '#ea580c', borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one },
   printText: { color: '#ea580c', fontWeight: '600', fontSize: 13 },
+  discardButton: { alignSelf: 'flex-start', marginTop: Spacing.one, borderWidth: 1, borderColor: '#dc2626', borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one },
+  discardText: { color: '#dc2626', fontWeight: '600', fontSize: 13 },
   completeButton: { alignSelf: 'flex-start', marginTop: Spacing.one, backgroundColor: '#16a34a', borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one },
   completeText: { color: '#fff', fontWeight: '600', fontSize: 13 },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },

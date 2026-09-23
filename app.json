@@ -51,6 +51,12 @@
         "projectId": "8e03142c-2e26-4f7d-9be4-9bfe50d5d84c"
       }
     },
-    "owner": "kmhdnizar"
+    "owner": "kmhdnizar",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/8e03142c-2e26-4f7d-9be4-9bfe50d5d84c"
+    }
   }
 }

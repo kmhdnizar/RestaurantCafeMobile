@@ -11,7 +11,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { useOrderableMenu } from '@/hooks/use-orderable-menu';
 import { Spacing } from '@/constants/theme';
 import { ApiError } from '@/api/client';
-import { addItem, fetchMyOrders, removeItem, updateOrderItem } from '@/api/orders';
+import { addItem, fetchOrders, removeItem, updateOrderItem } from '@/api/orders';
 import { updateQueuedOrderItems } from '@/offline/outbox';
 import { useOutboxStore } from '@/state/outbox-store';
 import { useSessionStore } from '@/state/session-store';
@@ -55,7 +55,10 @@ export default function EditOrderScreen() {
   const userId = useSessionStore((s) => s.user?.id ?? null);
   const userName = useSessionStore((s) => s.user?.name ?? null);
   const outbox = useOutboxStore((s) => s.entries);
-  const ordersQuery = useQuery({ queryKey: ['orders', 'mine'], queryFn: fetchMyOrders });
+  // Independent of the Orders tab's own (filtered) query — this one is
+  // unfiltered by date so editing still finds the order even if it falls
+  // outside whatever date filter happens to be selected on that tab.
+  const ordersQuery = useQuery({ queryKey: ['orders', 'lookup'], queryFn: () => fetchOrders() });
   const { items: menuItems, fmt } = useOrderableMenu();
   const kitchen = useKitchenPrinter();
 

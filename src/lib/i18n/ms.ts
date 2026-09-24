@@ -49,6 +49,12 @@ const ms: Dictionary = {
   },
   myOrders: {
     title: "Pesanan Saya",
+    allOrdersTitle: "Semua Pesanan",
+    filterToday: "Hari Ini",
+    filterYesterday: "Semalam",
+    filterAll: "Semua",
+    orderedAt: "Ditempah: {datetime}",
+    completedAt: "Selesai: {datetime}",
     offlineError: "Tidak dapat menghubungi pelayan sekarang — menunjukkan apa yang telah disimpan. Tarik ke bawah untuk cuba semula.",
     emptyList: "Tiada pesanan lagi — mulakan satu dari tab Pesanan Baharu.",
     notSent: "Belum dihantar",

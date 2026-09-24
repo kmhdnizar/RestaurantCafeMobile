@@ -48,6 +48,12 @@ const en = {
   },
   myOrders: {
     title: "My Orders",
+    allOrdersTitle: "All Orders",
+    filterToday: "Today",
+    filterYesterday: "Yesterday",
+    filterAll: "All",
+    orderedAt: "Ordered: {datetime}",
+    completedAt: "Completed: {datetime}",
     offlineError: "Can't reach the server right now — showing what's saved. Pull down to retry.",
     emptyList: "No orders yet — start one from the New Order tab.",
     notSent: "Not sent",

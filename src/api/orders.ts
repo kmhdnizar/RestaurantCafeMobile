@@ -15,8 +15,22 @@ export interface OrderSummary {
   bill: { id: string; subtotal: string; discount: string; total: string; paymentMethod: "CASH" | "QR" | "STAFF_FOOD"; paidAt: string | null } | null;
 }
 
-export async function fetchMyOrders(): Promise<OrderSummary[]> {
-  return apiFetch<OrderSummary[]>("/api/orders?mine=true");
+export interface FetchOrdersParams {
+  /** Force "just my own orders" even for a role that can otherwise see the
+   * whole restaurant (Manager/Cashier/Admin) — always true for Waiter. */
+  mine?: boolean;
+  /** Restrict to one local calendar date (YYYY-MM-DD), interpreted in `tz`. */
+  date?: string;
+  tz?: string;
+}
+
+export async function fetchOrders(params: FetchOrdersParams = {}): Promise<OrderSummary[]> {
+  const qs = new URLSearchParams();
+  if (params.mine) qs.set("mine", "true");
+  if (params.date) qs.set("date", params.date);
+  if (params.tz) qs.set("tz", params.tz);
+  const query = qs.toString();
+  return apiFetch<OrderSummary[]>(`/api/orders${query ? `?${query}` : ""}`);
 }
 
 export interface CreateOrderInput {

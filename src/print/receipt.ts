@@ -39,6 +39,10 @@ export interface Receipt {
    * there's no real payment yet, so the Payment line and "PAID" heading are
    * skipped in favor of "BILL" (not yet settled). */
   paymentMethod?: string;
+  /** Cash tendered — only meaningful (and only ever set) for a CASH payment
+   * where the waiter typed an amount. Change is derived from it, not stored
+   * separately, so it can never drift from cashReceived - total. */
+  cashReceived?: number;
   formatMoney: (amount: number) => string;
 }
 
@@ -85,6 +89,10 @@ export function buildReceiptBytes(receipt: Receipt): Uint8Array {
   doubleWidth(false);
   bold(false);
   if (receipt.paymentMethod) line(`Payment: ${PAYMENT_LABEL[receipt.paymentMethod] ?? receipt.paymentMethod}`);
+  if (receipt.cashReceived !== undefined) {
+    line(priceLine('Cash Received', receipt.formatMoney(receipt.cashReceived)));
+    line(priceLine('Change', receipt.formatMoney(Math.max(0, receipt.cashReceived - receipt.total))));
+  }
   dashed();
 
   center();

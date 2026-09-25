@@ -19,7 +19,10 @@ export interface Bill {
 }
 
 /** Marks an order paid and served. Only allowed for staff whose role has the
- * "/billing" "create_bill" permission — same rule as the web dashboard. */
-export async function createBill(orderId: string, paymentMethod: Bill["paymentMethod"]): Promise<Bill> {
-  return apiFetch<Bill>("/api/bills", { method: "POST", body: { orderId, paymentMethod } });
+ * "/billing" "create_bill" permission — same rule as the web dashboard.
+ * `discount` is already supported server-side (used by the web billing
+ * page) — this was just never wired up from the mobile app. Ignored (forced
+ * to 100%) when paymentMethod is STAFF_FOOD. */
+export async function createBill(orderId: string, paymentMethod: Bill["paymentMethod"], discount?: number): Promise<Bill> {
+  return apiFetch<Bill>("/api/bills", { method: "POST", body: { orderId, paymentMethod, discount } });
 }

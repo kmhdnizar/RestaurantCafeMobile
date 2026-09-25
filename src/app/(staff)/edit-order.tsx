@@ -474,19 +474,34 @@ export default function EditOrderScreen() {
               style={styles.menuList}
               contentContainerStyle={styles.menuListContent}
               keyboardShouldPersistTaps="handled"
-              renderItem={({ item }) => (
-                <ThemedView type="backgroundElement" style={styles.row}>
-                  <ThemedView type="backgroundElement" style={styles.rowName}>
-                    <ThemedText type="smallBold">{item.name}</ThemedText>
-                    <ThemedText themeColor="textSecondary" type="small">
-                      {Number(item.price) === 0 ? t('common.marketPricePlaceholder') : fmt(Number(item.price))}
-                    </ThemedText>
+              renderItem={({ item }) => {
+                const existing = lines.find((l) => l.menuItemId === item.id);
+                return (
+                  <ThemedView type="backgroundElement" style={styles.row}>
+                    <ThemedView type="backgroundElement" style={styles.rowName}>
+                      <ThemedText type="smallBold">{item.name}</ThemedText>
+                      <ThemedText themeColor="textSecondary" type="small">
+                        {Number(item.price) === 0 ? t('common.marketPricePlaceholder') : fmt(Number(item.price))}
+                      </ThemedText>
+                    </ThemedView>
+                    {existing ? (
+                      <ThemedView type="backgroundElement" style={styles.qtyControl}>
+                        <Pressable onPress={() => changeQty(item.id, -1)} style={styles.qtyButton}>
+                          <ThemedText style={styles.qtyButtonText}>−</ThemedText>
+                        </Pressable>
+                        <ThemedText style={styles.qtyValue}>{existing.quantity}</ThemedText>
+                        <Pressable onPress={() => changeQty(item.id, 1)} style={styles.qtyButton}>
+                          <ThemedText style={styles.qtyButtonText}>+</ThemedText>
+                        </Pressable>
+                      </ThemedView>
+                    ) : (
+                      <Pressable onPress={() => addLine(item)} style={styles.addButton}>
+                        <ThemedText style={styles.addButtonText}>{t('common.add')}</ThemedText>
+                      </Pressable>
+                    )}
                   </ThemedView>
-                  <Pressable onPress={() => addLine(item)} style={styles.addButton}>
-                    <ThemedText style={styles.addButtonText}>{t('common.add')}</ThemedText>
-                  </Pressable>
-                </ThemedView>
-              )}
+                );
+              }}
             />
 
             <Pressable onPress={save} disabled={saving} style={[styles.saveButton, saving && styles.disabled]}>

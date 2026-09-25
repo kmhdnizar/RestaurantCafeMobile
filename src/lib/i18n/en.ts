@@ -45,6 +45,7 @@ const en = {
     errorSelectTable: "Select a table.",
     errorEnterCustomerName: "Enter a customer name.",
     errorCouldNotSave: "Could not save the order on this phone. Please try again.",
+    tableOccupied: "Occupied",
   },
   myOrders: {
     title: "My Orders",
@@ -88,6 +89,10 @@ const en = {
     checkConnection: "Please check your connection and try again.",
   },
   editOrder: {
+    tableSection: "Table",
+    switchTableTitle: "Move this order?",
+    switchTableMessage: "Move this order to {table}?",
+    switchTableConfirm: "Move",
     itemsOnOrder: "Items on this order ({count})",
     saveChanges: "Save changes",
     orderNotFound: "This order could not be found — it may have just been sent.",

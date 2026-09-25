@@ -46,6 +46,7 @@ const ms: Dictionary = {
     errorSelectTable: "Pilih meja.",
     errorEnterCustomerName: "Masukkan nama pelanggan.",
     errorCouldNotSave: "Tidak dapat menyimpan pesanan pada telefon ini. Sila cuba lagi.",
+    tableOccupied: "Diduduki",
   },
   myOrders: {
     title: "Pesanan Saya",
@@ -89,6 +90,10 @@ const ms: Dictionary = {
     checkConnection: "Sila semak sambungan anda dan cuba lagi.",
   },
   editOrder: {
+    tableSection: "Meja",
+    switchTableTitle: "Pindahkan pesanan ini?",
+    switchTableMessage: "Pindahkan pesanan ini ke {table}?",
+    switchTableConfirm: "Pindah",
     itemsOnOrder: "Item dalam pesanan ini ({count})",
     saveChanges: "Simpan perubahan",
     orderNotFound: "Pesanan ini tidak dijumpai — mungkin baru sahaja dihantar.",

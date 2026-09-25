@@ -6,7 +6,8 @@ export interface OrderSummary {
   type: "DINE_IN" | "TAKEAWAY";
   status: "PENDING" | "PREPARING" | "READY" | "SERVED" | "CANCELLED";
   customerName: string | null;
-  table: { number: number; name: string | null } | null;
+  // `id` is already present in the server response — was just untyped here.
+  table: { id: string; number: number; name: string | null } | null;
   waiter: { id: string; name: string } | null;
   items: { id: string; quantity: number; unitPrice: string; notes: string | null; menuItem: { id: string; name: string; category?: { id: string; name: string } } }[];
   createdAt: string;
@@ -66,4 +67,11 @@ export async function removeItem(orderId: string, itemId: string): Promise<void>
 
 export async function addItem(orderId: string, input: { menuItemId: string; quantity: number; notes?: string; unitPrice?: number }): Promise<void> {
   await apiFetch(`/api/orders/${orderId}/items`, { method: "POST", body: input });
+}
+
+/** Moves a dine-in order to a different table (e.g. the customers moved
+ * seats). Server rejects it if the target table already has an order of
+ * its own in progress. */
+export async function updateOrderTable(orderId: string, tableId: string): Promise<void> {
+  await apiFetch(`/api/orders/${orderId}`, { method: "PATCH", body: { tableId } });
 }

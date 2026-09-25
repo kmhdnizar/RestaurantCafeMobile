@@ -19,6 +19,9 @@ export interface Table {
   name: string | null;
   capacity: number;
   active: boolean;
+  /** Set when this table already has a dine-in order in progress (not yet
+   * served/cancelled) — the order to grey the table out for/link to. */
+  activeOrderId: string | null;
 }
 
 export interface RestaurantConfig {

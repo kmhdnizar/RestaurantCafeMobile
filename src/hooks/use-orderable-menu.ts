@@ -31,6 +31,14 @@ export function useOrderableMenu() {
 
   const tables = useMemo(() => (tablesQuery.data ?? []).filter((t) => t.active), [tablesQuery.data]);
   const loading = menuQuery.isLoading || tablesQuery.isLoading || servingPeriodsQuery.isLoading || configQuery.isLoading;
+  const refreshing = menuQuery.isFetching || tablesQuery.isFetching || servingPeriodsQuery.isFetching || configQuery.isFetching;
 
-  return { items, tables, fmt, loading };
+  // Manual pull — nothing here refetches on its own (a 60s staleTime, no
+  // focus/foreground trigger wired up), so a menu edit on the web dashboard
+  // otherwise only shows up after the app is fully restarted.
+  async function refetch() {
+    await Promise.all([menuQuery.refetch(), tablesQuery.refetch(), servingPeriodsQuery.refetch(), configQuery.refetch()]);
+  }
+
+  return { items, tables, fmt, loading, refreshing, refetch };
 }

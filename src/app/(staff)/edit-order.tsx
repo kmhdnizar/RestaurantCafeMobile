@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -11,8 +11,8 @@ import { useTheme } from '@/hooks/use-theme';
 import { useOrderableMenu } from '@/hooks/use-orderable-menu';
 import { Spacing } from '@/constants/theme';
 import { ApiError } from '@/api/client';
-import { addItem, fetchOrders, removeItem, updateOrderItem } from '@/api/orders';
-import { updateQueuedOrderItems } from '@/offline/outbox';
+import { addItem, fetchOrders, removeItem, updateOrderItem, updateOrderTable } from '@/api/orders';
+import { updateQueuedOrderItems, updateQueuedOrderTable } from '@/offline/outbox';
 import { useOutboxStore } from '@/state/outbox-store';
 import { useSessionStore } from '@/state/session-store';
 import { tableName, sanitizePriceText } from '@/lib/format';
@@ -59,16 +59,19 @@ export default function EditOrderScreen() {
   // unfiltered by date so editing still finds the order even if it falls
   // outside whatever date filter happens to be selected on that tab.
   const ordersQuery = useQuery({ queryKey: ['orders', 'lookup'], queryFn: () => fetchOrders() });
-  const { items: menuItems, fmt } = useOrderableMenu();
+  const { items: menuItems, tables, fmt } = useOrderableMenu();
   const kitchen = useKitchenPrinter();
 
   const localEntry = kind === 'local' ? outbox.find((e) => e.clientRef === ref) : undefined;
   const serverOrder = kind === 'server' ? ordersQuery.data?.find((o) => o.id === ref) : undefined;
-  const isParcel = (localEntry ? localEntry.payload.type : serverOrder?.type) === 'TAKEAWAY';
+  const orderType = localEntry ? localEntry.payload.type : serverOrder?.type;
+  const isParcel = orderType === 'TAKEAWAY';
+  const currentTableId = localEntry ? localEntry.payload.tableId : serverOrder?.table?.id;
 
   const [lines, setLines] = useState<Line[] | null>(null);
   const [search, setSearch] = useState('');
   const [saving, setSaving] = useState(false);
+  const [switchingTable, setSwitchingTable] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Notes start collapsed so a line without one stays a single compact row.
   const [openNotes, setOpenNotes] = useState<Set<string>>(new Set());
@@ -181,6 +184,45 @@ export default function EditOrderScreen() {
         { menuItemId: item.id, name: item.name, quantity: 1, category: item.category?.name, price: listedPrice, priceText: listedPrice === 0 ? '' : String(listedPrice), notes: '', variablePrice: listedPrice === 0 },
       ];
     });
+  }
+
+  async function switchTable(table: { id: string; number: number; name: string | null }) {
+    const label = table.name?.trim() || `Table ${table.number}`;
+    setError(null);
+    setSwitchingTable(true);
+    try {
+      if (kind === 'local' && localEntry && userId) {
+        const ok = await updateQueuedOrderTable(localEntry.clientRef, table.id, label);
+        if (!ok) {
+          setError(t('editOrder.couldNotChange'));
+          return;
+        }
+        await useOutboxStore.getState().refresh(userId);
+      } else if (kind === 'server' && serverOrder) {
+        const net = await NetInfo.fetch();
+        if (!net.isConnected || net.isInternetReachable === false) {
+          setError(t('editOrder.needConnection'));
+          return;
+        }
+        try {
+          await updateOrderTable(serverOrder.id, table.id);
+        } catch (e) {
+          setError(e instanceof ApiError ? e.message : t('myOrders.somethingWentWrongTitle'));
+          return;
+        }
+        await queryClient.invalidateQueries({ queryKey: ['orders'] });
+      }
+    } finally {
+      setSwitchingTable(false);
+    }
+  }
+
+  function confirmSwitchTable(table: { id: string; number: number; name: string | null }) {
+    const label = table.name?.trim() || `Table ${table.number}`;
+    Alert.alert(t('editOrder.switchTableTitle'), t('editOrder.switchTableMessage', { table: label }), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('editOrder.switchTableConfirm'), onPress: () => void switchTable(table) },
+    ]);
   }
 
   async function save() {
@@ -324,6 +366,31 @@ export default function EditOrderScreen() {
               </ThemedView>
             )}
 
+            {orderType === 'DINE_IN' && (
+              <>
+                <ThemedText type="smallBold">{t('editOrder.tableSection')}</ThemedText>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow} contentContainerStyle={styles.chipRowContent}>
+                  {tables.map((table) => {
+                    const isCurrent = table.id === currentTableId;
+                    const occupied = !!table.activeOrderId && !isCurrent;
+                    return (
+                      <Pressable
+                        key={table.id}
+                        onPress={() => !isCurrent && !occupied && confirmSwitchTable(table)}
+                        disabled={isCurrent || occupied || switchingTable}
+                        style={[styles.chip, isCurrent && styles.chipActive, occupied && styles.chipOccupied]}
+                      >
+                        <ThemedText style={isCurrent ? styles.chipTextActive : occupied ? styles.chipTextOccupied : undefined}>
+                          {table.name?.trim() || `Table ${table.number}`}
+                          {occupied ? ` · ${t('newOrder.tableOccupied')}` : ''}
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </>
+            )}
+
             <ThemedText type="smallBold">
               {t('editOrder.itemsOnOrder', { count: lines.length })}
             </ThemedText>
@@ -440,6 +507,13 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, padding: Spacing.three, gap: Spacing.two },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
   rowName: { flex: 1 },
+  chipRow: { flexGrow: 0, flexShrink: 0, minHeight: 48 },
+  chipRowContent: { gap: Spacing.two, paddingVertical: Spacing.one, alignItems: 'center' },
+  chip: { minHeight: 40, justifyContent: 'center', paddingHorizontal: Spacing.three, borderRadius: Spacing.four, backgroundColor: 'rgba(128,128,128,0.15)' },
+  chipActive: { backgroundColor: '#ea580c' },
+  chipTextActive: { color: '#fff', fontWeight: '600' },
+  chipOccupied: { opacity: 0.5 },
+  chipTextOccupied: { fontStyle: 'italic' },
   itemBlock: { borderRadius: Spacing.three, overflow: 'hidden' },
   totalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
   priceEditRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, marginTop: 2 },

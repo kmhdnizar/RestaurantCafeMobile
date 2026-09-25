@@ -118,3 +118,20 @@ export async function updateQueuedOrderItems(clientRef: string, items: CreateOrd
   ]);
   return result.changes > 0;
 }
+
+/** Same idea as updateQueuedOrderItems, but for moving a not-yet-synced
+ * dine-in order to a different table — no server round trip needed since
+ * the order doesn't exist there yet. */
+export async function updateQueuedOrderTable(clientRef: string, tableId: string, label: string): Promise<boolean> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<Row>("SELECT * FROM outbox WHERE client_ref = ? AND status = 'pending'", [clientRef]);
+  if (!row) return false;
+  const payload: CreateOrderInput = { ...(JSON.parse(row.payload) as CreateOrderInput), tableId };
+  const display: OutboxDisplay = { ...(JSON.parse(row.display) as OutboxDisplay), label };
+  const result = await db.runAsync("UPDATE outbox SET payload = ?, display = ? WHERE client_ref = ? AND status = 'pending'", [
+    JSON.stringify(payload),
+    JSON.stringify(display),
+    clientRef,
+  ]);
+  return result.changes > 0;
+}

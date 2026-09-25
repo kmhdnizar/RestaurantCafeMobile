@@ -168,11 +168,22 @@ export default function NewOrderScreen() {
 
         {cart.orderType === 'DINE_IN' ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow} contentContainerStyle={styles.chipRowContent}>
-            {activeTables.map((table) => (
-              <Pressable key={table.id} onPress={() => cart.setTableId(table.id)} style={[styles.chip, cart.tableId === table.id && styles.chipActive]}>
-                <ThemedText style={cart.tableId === table.id ? styles.chipTextActive : undefined}>{table.name?.trim() || `Table ${table.number}`}</ThemedText>
-              </Pressable>
-            ))}
+            {activeTables.map((table) => {
+              const occupied = !!table.activeOrderId;
+              return (
+                <Pressable
+                  key={table.id}
+                  onPress={() => !occupied && cart.setTableId(table.id)}
+                  disabled={occupied}
+                  style={[styles.chip, cart.tableId === table.id && styles.chipActive, occupied && styles.chipOccupied]}
+                >
+                  <ThemedText style={cart.tableId === table.id ? styles.chipTextActive : occupied ? styles.chipTextOccupied : undefined}>
+                    {table.name?.trim() || `Table ${table.number}`}
+                    {occupied ? ` · ${t('newOrder.tableOccupied')}` : ''}
+                  </ThemedText>
+                </Pressable>
+              );
+            })}
           </ScrollView>
         ) : (
           <TextInput
@@ -368,6 +379,8 @@ const styles = StyleSheet.create({
   chip: { minHeight: 40, justifyContent: 'center', paddingHorizontal: Spacing.three, borderRadius: Spacing.four, backgroundColor: 'rgba(128,128,128,0.15)' },
   chipActive: { backgroundColor: '#ea580c' },
   chipTextActive: { color: '#fff', fontWeight: '600' },
+  chipOccupied: { opacity: 0.5 },
+  chipTextOccupied: { fontStyle: 'italic' },
   loading: { marginTop: Spacing.four },
   menuFlex: { flex: 1, minHeight: 180 },
   menuList: { gap: Spacing.two, paddingBottom: Spacing.four },

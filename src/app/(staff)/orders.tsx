@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, FlatList, Modal, Pressable, RefreshControl, S
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Ionicons } from '@expo/vector-icons';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -158,9 +159,14 @@ export default function MyOrdersScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        <ThemedText type="subtitle" style={styles.title}>
-          {canViewAll ? t('myOrders.allOrdersTitle') : t('myOrders.title')}
-        </ThemedText>
+        <ThemedView style={styles.titleRow}>
+          <ThemedText type="subtitle" style={styles.title}>
+            {canViewAll ? t('myOrders.allOrdersTitle') : t('myOrders.title')}
+          </ThemedText>
+          <Pressable onPress={refresh} disabled={query.isFetching} style={styles.refreshButton}>
+            <Ionicons name="refresh" size={20} color={query.isFetching ? '#9ca3af' : '#ea580c'} />
+          </Pressable>
+        </ThemedView>
 
         <ThemedView style={styles.dateFilterBar}>
           <Pressable onPress={() => shiftDate(-1)} disabled={dateFilter === null} style={[styles.dateArrow, dateFilter === null && styles.dateArrowDisabled]}>
@@ -348,6 +354,8 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1, paddingHorizontal: Spacing.three },
   title: { marginVertical: Spacing.three },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  refreshButton: { padding: Spacing.two },
   dateFilterBar: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, marginBottom: Spacing.two },
   dateFilterChips: { flex: 1, flexDirection: 'row', gap: Spacing.one },
   dateChip: { flex: 1, alignItems: 'center', paddingVertical: Spacing.two, borderRadius: Spacing.two, borderWidth: 1, borderColor: '#ea580c' },

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -24,7 +25,7 @@ export default function NewOrderScreen() {
   const userId = useSessionStore((s) => s.user?.id ?? null);
   const userName = useSessionStore((s) => s.user?.name ?? null);
 
-  const { items: visibleItems, tables: activeTables, fmt, loading } = useOrderableMenu();
+  const { items: visibleItems, tables: activeTables, fmt, loading, refreshing, refetch } = useOrderableMenu();
 
   const kitchen = useKitchenPrinter();
   const cart = useCartStore();
@@ -147,9 +148,14 @@ export default function NewOrderScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-        <ThemedText type="subtitle" style={styles.title}>
-          {t('newOrder.title')}
-        </ThemedText>
+        <ThemedView style={styles.titleRow}>
+          <ThemedText type="subtitle" style={styles.title}>
+            {t('newOrder.title')}
+          </ThemedText>
+          <Pressable onPress={() => void refetch()} disabled={refreshing} style={styles.refreshButton}>
+            <Ionicons name="refresh" size={20} color={refreshing ? theme.textSecondary : '#ea580c'} />
+          </Pressable>
+        </ThemedView>
 
         {/* Order type */}
         <ThemedView style={styles.segmented}>
@@ -270,13 +276,20 @@ export default function NewOrderScreen() {
         <ThemedText type="smallBold" style={styles.sectionGap}>
           {t('newOrder.addItemsSection')}
         </ThemedText>
-        <TextInput
-          value={search}
-          onChangeText={setSearch}
-          placeholder={t('common.searchMenuPlaceholder')}
-          placeholderTextColor={theme.textSecondary}
-          style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-        />
+        <ThemedView style={styles.searchRow}>
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder={t('common.searchMenuPlaceholder')}
+            placeholderTextColor={theme.textSecondary}
+            style={[styles.input, styles.searchInput, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+          />
+          {search.length > 0 && (
+            <Pressable onPress={() => setSearch('')} style={styles.clearSearchButton} accessibilityLabel={t('common.clearSearch')}>
+              <Ionicons name="close-circle" size={20} color={theme.textSecondary} />
+            </Pressable>
+          )}
+        </ThemedView>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow} contentContainerStyle={styles.chipRowContent}>
           <Pressable onPress={() => setActiveCategory(null)} style={[styles.chip, activeCategory === null && styles.chipActive]}>
@@ -340,11 +353,16 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1, paddingHorizontal: Spacing.three, gap: Spacing.two },
   title: { marginTop: Spacing.two },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  refreshButton: { padding: Spacing.two },
   segmented: { flexDirection: 'row', gap: Spacing.two },
   segment: { flex: 1, paddingVertical: Spacing.two, borderRadius: Spacing.two, alignItems: 'center', backgroundColor: 'rgba(128,128,128,0.15)' },
   segmentActive: { backgroundColor: '#ea580c' },
   segmentTextActive: { color: '#fff', fontWeight: '600' },
   input: { borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, fontSize: 15 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
+  searchInput: { flex: 1 },
+  clearSearchButton: { padding: Spacing.one },
   chipRow: { flexGrow: 0, flexShrink: 0, minHeight: 48 },
   chipRowContent: { gap: Spacing.two, paddingVertical: Spacing.one, alignItems: 'center' },
   chip: { minHeight: 40, justifyContent: 'center', paddingHorizontal: Spacing.three, borderRadius: Spacing.four, backgroundColor: 'rgba(128,128,128,0.15)' },

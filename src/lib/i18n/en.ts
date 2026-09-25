@@ -18,6 +18,8 @@ const en = {
     addNote: "+ Add note",
     searchMenuPlaceholder: "Search menu…",
     marketPriceRequired: "Enter a price for: {items} (type 0 if there's genuinely no charge).",
+    refresh: "Refresh",
+    clearSearch: "Clear search",
   },
   tabs: {
     newOrder: "New Order",

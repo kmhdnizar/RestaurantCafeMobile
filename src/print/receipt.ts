@@ -35,7 +35,10 @@ export interface Receipt {
   subtotal: number;
   discount: number;
   total: number;
-  paymentMethod: string;
+  /** Omitted for a provisional copy printed before the order is completed —
+   * there's no real payment yet, so the Payment line and "PAID" heading are
+   * skipped in favor of "BILL" (not yet settled). */
+  paymentMethod?: string;
   formatMoney: (amount: number) => string;
 }
 
@@ -58,7 +61,7 @@ export function buildReceiptBytes(receipt: Receipt): Uint8Array {
   line(receipt.restaurantName);
   doubleWidth(false);
   bold(false);
-  line('RECEIPT');
+  line(receipt.paymentMethod ? 'RECEIPT' : 'BILL');
   dashed();
 
   left();
@@ -81,7 +84,7 @@ export function buildReceiptBytes(receipt: Receipt): Uint8Array {
   for (const row of priceLine('TOTAL', receipt.formatMoney(receipt.total)).split('\n')) line(row);
   doubleWidth(false);
   bold(false);
-  line(`Payment: ${PAYMENT_LABEL[receipt.paymentMethod] ?? receipt.paymentMethod}`);
+  if (receipt.paymentMethod) line(`Payment: ${PAYMENT_LABEL[receipt.paymentMethod] ?? receipt.paymentMethod}`);
   dashed();
 
   center();

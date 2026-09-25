@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Modal, Pressable, RefreshControl, StyleSheet } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Modal, Pressable, RefreshControl, StyleSheet, TextInput } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -7,8 +7,9 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { useTheme } from '@/hooks/use-theme';
 import { Spacing } from '@/constants/theme';
-import { formatDateOnly, formatDateTime, tableName, toRestaurantDateKey } from '@/lib/format';
+import { formatDateOnly, formatDateTime, sanitizePriceText, tableName, toRestaurantDateKey } from '@/lib/format';
 import { useOrderableMenu } from '@/hooks/use-orderable-menu';
 import { fetchConfig } from '@/api/menu';
 import { fetchOrders, type OrderSummary } from '@/api/orders';
@@ -54,6 +55,7 @@ type Row = { kind: 'local'; entry: OutboxEntry } | { kind: 'server'; order: Orde
 
 export default function MyOrdersScreen() {
   const t = useT();
+  const theme = useTheme();
   const queryClient = useQueryClient();
   const router = useRouter();
   const kitchen = useKitchenPrinter();
@@ -88,6 +90,12 @@ export default function MyOrdersScreen() {
   const refreshOutbox = useOutboxStore((s) => s.refresh);
   const [completingOrder, setCompletingOrder] = useState<OrderSummary | null>(null);
   const [completing, setCompleting] = useState(false);
+  const [discountText, setDiscountText] = useState('0');
+  // Cash is the only method with an extra step — entering what the
+  // customer handed over so the change can be shown and printed. QR Pay
+  // and Staff Food complete in a single tap, same as before.
+  const [cashStep, setCashStep] = useState(false);
+  const [cashReceivedText, setCashReceivedText] = useState('');
 
   // Orders still on this phone (waiting, sending, or refused) come first,
   // newest on top, followed by what the server already has. The outbox is
@@ -107,6 +115,13 @@ export default function MyOrdersScreen() {
     return queryClient.invalidateQueries({ queryKey: ['orders'] });
   }
 
+  function openCompleteModal(order: OrderSummary) {
+    setDiscountText('0');
+    setCashStep(false);
+    setCashReceivedText('');
+    setCompletingOrder(order);
+  }
+
   function discardEntry(clientRef: string) {
     Alert.alert(t('myOrders.discardTitle'), t('myOrders.discardMessage'), [
       { text: t('common.cancel'), style: 'cancel' },
@@ -123,10 +138,10 @@ export default function MyOrdersScreen() {
     ]);
   }
 
-  async function completeOrder(order: OrderSummary, paymentMethod: Bill['paymentMethod']) {
+  async function completeOrder(order: OrderSummary, paymentMethod: Bill['paymentMethod'], discount: number, cashReceived?: number) {
     setCompleting(true);
     try {
-      const bill = await createBill(order.id, paymentMethod);
+      const bill = await createBill(order.id, paymentMethod, discount);
       setCompletingOrder(null);
       await queryClient.invalidateQueries({ queryKey: ['orders'] });
       if (kitchen.canPrintReceipts) {
@@ -140,6 +155,7 @@ export default function MyOrdersScreen() {
           discount: Number(bill.discount),
           total: Number(bill.total),
           paymentMethod: bill.paymentMethod,
+          ...(cashReceived !== undefined && { cashReceived }),
           formatMoney: fmt,
         });
       }
@@ -292,7 +308,7 @@ export default function MyOrdersScreen() {
                   </ThemedText>
                 )}
                 {editable && (
-                  <Pressable onPress={() => setCompletingOrder(order)} style={styles.completeButton}>
+                  <Pressable onPress={() => openCompleteModal(order)} style={styles.completeButton}>
                     <ThemedText style={styles.completeText}>{t('myOrders.completeOrder')}</ThemedText>
                   </Pressable>
                 )}
@@ -323,23 +339,91 @@ export default function MyOrdersScreen() {
             <ThemedText type="smallBold" style={styles.modalTitle}>
               {t('myOrders.completeOrderTitle', { num: completingOrder ? `#${completingOrder.orderNumber}` : '' })}
             </ThemedText>
-            <ThemedText themeColor="textSecondary" style={styles.modalSubtitle}>
-              {t('myOrders.howWasThisPaid')}
-            </ThemedText>
             {completing ? (
               <ActivityIndicator style={styles.modalLoading} />
-            ) : (
-              <>
-                {PAYMENT_METHODS.map((m) => (
-                  <Pressable key={m.value} onPress={() => completingOrder && void completeOrder(completingOrder, m.value)} style={styles.paymentOption}>
-                    <ThemedText style={styles.paymentOptionText}>{t(m.labelKey)}</ThemedText>
-                  </Pressable>
-                ))}
-                <Pressable onPress={() => setCompletingOrder(null)} style={styles.modalCancel}>
-                  <ThemedText themeColor="textSecondary">{t('common.cancel')}</ThemedText>
-                </Pressable>
-              </>
-            )}
+            ) : completingOrder ? (
+              (() => {
+                const subtotal = completingOrder.items.reduce((sum, l) => sum + Number(l.unitPrice) * l.quantity, 0);
+                const discount = Math.min(Math.max(0, parseFloat(discountText) || 0), subtotal);
+                const total = subtotal - discount;
+                const cashReceived = parseFloat(cashReceivedText) || 0;
+                const cashTooLow = cashReceived < total;
+
+                return (
+                  <>
+                    <ThemedView style={styles.billRow}>
+                      <ThemedText themeColor="textSecondary">{t('myOrders.subtotal')}</ThemedText>
+                      <ThemedText>{fmt(subtotal)}</ThemedText>
+                    </ThemedView>
+                    <ThemedView style={styles.billRow}>
+                      <ThemedText themeColor="textSecondary">{t('myOrders.discountLabel')}</ThemedText>
+                      <TextInput
+                        value={discountText}
+                        onChangeText={(v) => setDiscountText(sanitizePriceText(v))}
+                        keyboardType="decimal-pad"
+                        style={[styles.billInput, { color: theme.text, backgroundColor: theme.background }]}
+                      />
+                    </ThemedView>
+                    <ThemedView style={styles.billRow}>
+                      <ThemedText type="smallBold">{t('common.total')}</ThemedText>
+                      <ThemedText type="smallBold">{fmt(total)}</ThemedText>
+                    </ThemedView>
+
+                    {cashStep ? (
+                      <>
+                        <ThemedText themeColor="textSecondary" style={styles.modalSubtitle}>
+                          {t('myOrders.cashReceivedLabel')}
+                        </ThemedText>
+                        <TextInput
+                          value={cashReceivedText}
+                          onChangeText={(v) => setCashReceivedText(sanitizePriceText(v))}
+                          keyboardType="decimal-pad"
+                          autoFocus
+                          style={[styles.input, { color: theme.text, backgroundColor: theme.background }]}
+                        />
+                        <ThemedView style={styles.billRow}>
+                          <ThemedText themeColor="textSecondary">{t('myOrders.change')}</ThemedText>
+                          <ThemedText themeColor="textSecondary">{fmt(Math.max(0, cashReceived - total))}</ThemedText>
+                        </ThemedView>
+                        {cashReceivedText.trim() !== '' && cashTooLow && (
+                          <ThemedText style={styles.errorText} type="small">
+                            {t('myOrders.cashReceivedTooLow')}
+                          </ThemedText>
+                        )}
+                        <Pressable
+                          onPress={() => void completeOrder(completingOrder, 'CASH', discount, cashReceived)}
+                          disabled={cashTooLow}
+                          style={[styles.paymentOption, cashTooLow && styles.disabled]}
+                        >
+                          <ThemedText style={styles.paymentOptionText}>{t('myOrders.confirmCashPayment')}</ThemedText>
+                        </Pressable>
+                        <Pressable onPress={() => setCashStep(false)} style={styles.modalCancel}>
+                          <ThemedText themeColor="textSecondary">{t('common.back')}</ThemedText>
+                        </Pressable>
+                      </>
+                    ) : (
+                      <>
+                        <ThemedText themeColor="textSecondary" style={styles.modalSubtitle}>
+                          {t('myOrders.howWasThisPaid')}
+                        </ThemedText>
+                        {PAYMENT_METHODS.map((m) => (
+                          <Pressable
+                            key={m.value}
+                            onPress={() => (m.value === 'CASH' ? setCashStep(true) : void completeOrder(completingOrder, m.value, discount))}
+                            style={styles.paymentOption}
+                          >
+                            <ThemedText style={styles.paymentOptionText}>{t(m.labelKey)}</ThemedText>
+                          </Pressable>
+                        ))}
+                        <Pressable onPress={() => setCompletingOrder(null)} style={styles.modalCancel}>
+                          <ThemedText themeColor="textSecondary">{t('common.cancel')}</ThemedText>
+                        </Pressable>
+                      </>
+                    )}
+                  </>
+                );
+              })()
+            ) : null}
           </ThemedView>
         </ThemedView>
       </Modal>
@@ -382,6 +466,11 @@ const styles = StyleSheet.create({
   modalTitle: { textAlign: 'center' },
   modalSubtitle: { textAlign: 'center', marginBottom: Spacing.two },
   modalLoading: { marginVertical: Spacing.four },
+  billRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  billInput: { minWidth: 90, textAlign: 'right', borderRadius: Spacing.one, paddingHorizontal: Spacing.two, paddingVertical: 4, fontSize: 15 },
+  input: { borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, fontSize: 15 },
+  errorText: { color: '#dc2626' },
+  disabled: { opacity: 0.5 },
   paymentOption: { backgroundColor: '#ea580c', borderRadius: Spacing.two, paddingVertical: Spacing.three, alignItems: 'center' },
   paymentOptionText: { color: '#fff', fontWeight: '600', fontSize: 16 },
   modalCancel: { alignItems: 'center', paddingVertical: Spacing.two, marginTop: Spacing.one },

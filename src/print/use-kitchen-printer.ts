@@ -41,21 +41,39 @@ export function ticketFromServerOrder(order: OrderSummary): TicketBody {
   };
 }
 
-/** Rebuilds a receipt for an order that's already been completed, for
- * reprinting — uses the bill the server already stored, not a fresh
- * calculation, so a reprint always matches what was actually charged. */
-export function receiptFromServerOrder(order: OrderSummary, restaurantName: string, formatMoney: (n: number) => string): Omit<Receipt, 'timestamp'> | null {
-  if (!order.bill) return null;
+/** Builds a customer-facing copy for an order — the real bill's numbers once
+ * it's been completed (a true reprint, matching what was actually charged),
+ * or a provisional one straight from the current items before then (no
+ * discount or payment yet, so it prints as a "BILL" rather than a
+ * "RECEIPT") — e.g. to show a customer their tally at the table before they
+ * ask to pay. */
+export function receiptFromServerOrder(order: OrderSummary, restaurantName: string, formatMoney: (n: number) => string): Omit<Receipt, 'timestamp'> {
+  const label = order.type === 'DINE_IN' ? (order.table ? tableName(order.table) : 'Table') : (order.customerName ?? 'Takeaway');
+  const items = order.items.map((it) => ({ qty: it.quantity, name: it.menuItem.name, unitPrice: Number(it.unitPrice) }));
+  if (order.bill) {
+    return {
+      restaurantName,
+      orderNumber: order.orderNumber,
+      label,
+      waiter: order.waiter?.name,
+      items,
+      subtotal: Number(order.bill.subtotal),
+      discount: Number(order.bill.discount),
+      total: Number(order.bill.total),
+      paymentMethod: order.bill.paymentMethod,
+      formatMoney,
+    };
+  }
+  const subtotal = items.reduce((sum, it) => sum + it.unitPrice * it.qty, 0);
   return {
     restaurantName,
     orderNumber: order.orderNumber,
-    label: order.type === 'DINE_IN' ? (order.table ? tableName(order.table) : 'Table') : (order.customerName ?? 'Takeaway'),
+    label,
     waiter: order.waiter?.name,
-    items: order.items.map((it) => ({ qty: it.quantity, name: it.menuItem.name, unitPrice: Number(it.unitPrice) })),
-    subtotal: Number(order.bill.subtotal),
-    discount: Number(order.bill.discount),
-    total: Number(order.bill.total),
-    paymentMethod: order.bill.paymentMethod,
+    items,
+    subtotal,
+    discount: 0,
+    total: subtotal,
     formatMoney,
   };
 }

@@ -301,12 +301,9 @@ export default function MyOrdersScreen() {
                     <ThemedText style={styles.printText}>{kitchen.printing ? t('myOrders.printing') : t('myOrders.printTicket')}</ThemedText>
                   </Pressable>
                 )}
-                {kitchen.canPrintReceipts && order.bill && (
+                {kitchen.canPrintReceipts && (
                   <Pressable
-                    onPress={() => {
-                      const receipt = receiptFromServerOrder(order, restaurantName ?? '', fmt);
-                      if (receipt) void kitchen.printReceipt(receipt);
-                    }}
+                    onPress={() => void kitchen.printReceipt(receiptFromServerOrder(order, restaurantName ?? '', fmt))}
                     disabled={kitchen.printing}
                     style={styles.printButton}
                   >
